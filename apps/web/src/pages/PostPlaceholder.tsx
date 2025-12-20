@@ -25,6 +25,7 @@ import {
 import SiteHeader from '../components/SiteHeader'
 import { ErrorState } from '../components/StateBlocks'
 import { useAuth } from '../context/AuthContext'
+import { formatRelativeTimeUTC8 } from '../utils/time'
 
 type LoadState<T> = {
   data: T
@@ -399,7 +400,7 @@ const PostPlaceholder = () => {
         <div id={`comment-${comment.id}`} className="comment-item">
           <div className="comment-header">
             <div className="comment-meta">
-              {comment.author.nickname} · {comment.created_at}
+              {comment.author.nickname} · {formatRelativeTimeUTC8(comment.created_at)}
             </div>
             <details className="action-menu">
               <summary className="action-menu__trigger" aria-label="更多操作">
@@ -516,7 +517,11 @@ const PostPlaceholder = () => {
                 </details>
               </div>
               <div className="post-detail__meta">
-                {[state.data.author.nickname, state.data.created_at, state.data.board?.name]
+                {[
+                  state.data.author.nickname,
+                  formatRelativeTimeUTC8(state.data.created_at),
+                  state.data.board?.name,
+                ]
                   .filter(Boolean)
                   .join(' · ')}
               </div>

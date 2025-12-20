@@ -3,6 +3,7 @@ import SectionCard from '../components/SectionCard'
 import SiteHeader from '../components/SiteHeader'
 import { useAuth } from '../context/AuthContext'
 import { getToken } from '../store/auth'
+import { formatRelativeTimeUTC8 } from '../utils/time'
 
 type RoomOption = {
   id: string
@@ -48,14 +49,6 @@ const rooms: RoomOption[] = [
 const buildWsUrl = (token: string) => {
   const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
   return `${protocol}://${window.location.host}/ws/chat?token=${encodeURIComponent(token)}`
-}
-
-const formatTimestamp = (value: string) => {
-  const parsed = new Date(value)
-  if (Number.isNaN(parsed.getTime())) {
-    return value
-  }
-  return parsed.toLocaleString()
 }
 
 const makeRequestId = () => `${Date.now()}-${Math.random().toString(16).slice(2)}`
@@ -282,7 +275,9 @@ const Chat = () => {
                           <span className="chat-author">
                             {message.senderName ?? (message.isHistory ? '历史记录' : '匿名')}
                           </span>
-                          <span className="chat-time">{formatTimestamp(message.createdAt)}</span>
+                          <span className="chat-time">
+                            {formatRelativeTimeUTC8(message.createdAt)}
+                          </span>
                         </div>
                         <div className="chat-content">{message.content}</div>
                       </div>

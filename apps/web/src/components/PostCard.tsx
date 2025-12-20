@@ -4,46 +4,13 @@ import type { PostItem } from '../api/posts'
 import { clearVote, votePost } from '../api/posts'
 import { getErrorMessage } from '../api/client'
 import { useAuth } from '../context/AuthContext'
+import { formatRelativeTimeUTC8 } from '../utils/time'
 
 type PostCardProps = {
   post: PostItem
 }
 
 type VoteState = -1 | 0 | 1
-
-const formatRelativeTime = (value: string) => {
-  const parsed = new Date(value)
-  if (Number.isNaN(parsed.getTime())) {
-    return value
-  }
-
-  const diffMs = Date.now() - parsed.getTime()
-  if (diffMs < 0) {
-    return value
-  }
-
-  const diffSeconds = Math.floor(diffMs / 1000)
-  if (diffSeconds < 60) {
-    return '刚刚'
-  }
-
-  const diffMinutes = Math.floor(diffSeconds / 60)
-  if (diffMinutes < 60) {
-    return `${diffMinutes}分钟前`
-  }
-
-  const diffHours = Math.floor(diffMinutes / 60)
-  if (diffHours < 24) {
-    return `${diffHours}小时前`
-  }
-
-  const diffDays = Math.floor(diffHours / 24)
-  if (diffDays < 30) {
-    return `${diffDays}天前`
-  }
-
-  return parsed.toLocaleDateString()
-}
 
 const getBoardName = (post: PostItem) => {
   const record = post as PostItem & {
@@ -81,7 +48,7 @@ const normalizeVote = (value: number | undefined): VoteState => {
 const PostCard = ({ post }: PostCardProps) => {
   const navigate = useNavigate()
   const { user } = useAuth()
-  const timeLabel = formatRelativeTime(post.created_at)
+  const timeLabel = formatRelativeTimeUTC8(post.created_at)
   const boardName = getBoardName(post)
   const commentCount = getCommentCount(post)
   const baseScore = typeof post.score === 'number' ? post.score : 0
