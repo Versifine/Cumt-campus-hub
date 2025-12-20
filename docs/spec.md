@@ -1,4 +1,4 @@
-# docs/spec.md — campus-hub 规格说明（v0.1）
+# docs/spec.md — campus-hub 规格说明（v0.2）
 
 > Repo（暂定）：campus-hub
 >
@@ -42,7 +42,7 @@
 * 后端：Go（REST API + WebSocket）
 * 客户端（阶段性）：
 
-  * Phase A：Web（验证产品与交互）
+  * Phase A：Web（Vue 3 + TypeScript + Vite + Naive UI，用于验证产品与交互）
   * Phase C：Kotlin Multiplatform（长期客户端）
 
 ---
@@ -51,7 +51,7 @@
 
 ### 3.1 用户与认证
 
-* 基础登录（账号 + token）
+* 注册/登录（账号 + 密码 + token）
 * 用户昵称 / 基础资料
 * 前端匿名展示（非强匿名）
 
@@ -176,7 +176,7 @@ campus-hub/
     main.go
 
   apps/
-    web/
+    web/   # Vue 3 + TypeScript + Vite + Naive UI
     kmp/   # Phase C
 ```
 
@@ -189,6 +189,7 @@ campus-hub/
 * API / WS 协议初版冻结
 * 功能闭环跑通
 * 基础 UI 与交互完成
+* Web 前端技术栈：Vue 3 + TypeScript + Vite + Naive UI
 
 ### Phase B：工程加固
 
