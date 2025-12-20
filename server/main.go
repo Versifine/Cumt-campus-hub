@@ -120,6 +120,10 @@ func main() {
 			communityHandler.Comments(parts[0])(w, r)
 			return
 		}
+		if len(parts) == 4 && parts[1] == "comments" && parts[3] == "votes" {
+			communityHandler.CommentVotes(parts[0], parts[2])(w, r)
+			return
+		}
 		if len(parts) == 3 && parts[1] == "comments" {
 			communityHandler.Comment(parts[0], parts[2])(w, r)
 			return

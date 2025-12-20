@@ -34,7 +34,7 @@ type API interface {
 
 	Comments(postID string) []Comment
 	GetComment(postID, commentID string) (Comment, bool)
-	CreateComment(postID, authorID, content string) Comment
+	CreateComment(postID, authorID, content, parentID string) Comment
 	SoftDeleteComment(postID, commentID, actorUserID string) error
 	CommentCount(postID string) int
 
@@ -42,6 +42,10 @@ type API interface {
 	PostVote(postID, userID string) int
 	VotePost(postID, userID string, value int) (int, int, error)
 	ClearPostVote(postID, userID string) (int, int, error)
+	CommentScore(postID, commentID string) int
+	CommentVote(postID, commentID, userID string) int
+	VoteComment(postID, commentID, userID string, value int) (int, int, error)
+	ClearCommentVote(postID, commentID, userID string) (int, int, error)
 
 	SaveFile(uploaderID, filename, storageKey, storagePath string) FileMeta
 	GetFile(fileID string) (FileMeta, bool)
@@ -76,6 +80,7 @@ type Post struct {
 type Comment struct {
 	ID        string
 	PostID    string
+	ParentID  string
 	AuthorID  string
 	Content   string
 	CreatedAt string
@@ -118,41 +123,43 @@ type Report struct {
 
 // Store is an in-memory, mutex-protected demo data store.
 type Store struct {
-	mu          sync.Mutex
-	users       map[string]User
-	accounts    map[string]string
-	passwords   map[string]string
-	tokens      map[string]string
-	userTokens  map[string]string
-	boards      []Board
-	posts       []Post
-	comments    []Comment
-	postVotes   map[string]map[string]int
-	files       map[string]FileMeta
-	messages    map[string][]ChatMessage
-	reports     []Report
-	nextUserID  int
-	nextPostID  int
-	nextComment int
-	nextFileID  int
-	nextMsgID   int
-	nextReport  int
+	mu           sync.Mutex
+	users        map[string]User
+	accounts     map[string]string
+	passwords    map[string]string
+	tokens       map[string]string
+	userTokens   map[string]string
+	boards       []Board
+	posts        []Post
+	comments     []Comment
+	postVotes    map[string]map[string]int
+	commentVotes map[string]map[string]int
+	files        map[string]FileMeta
+	messages     map[string][]ChatMessage
+	reports      []Report
+	nextUserID   int
+	nextPostID   int
+	nextComment  int
+	nextFileID   int
+	nextMsgID    int
+	nextReport   int
 }
 
 // NewStore creates a demo store with a few built-in boards.
 func NewStore() *Store {
 	return &Store{
-		users:      map[string]User{},
-		accounts:   map[string]string{},
-		passwords:  map[string]string{},
-		tokens:     map[string]string{},
-		userTokens: map[string]string{},
-		boards:     defaultBoards(),
-		posts:      []Post{},
-		comments:   []Comment{},
-		postVotes:  map[string]map[string]int{},
-		files:      map[string]FileMeta{},
-		messages:   map[string][]ChatMessage{},
+		users:        map[string]User{},
+		accounts:     map[string]string{},
+		passwords:    map[string]string{},
+		tokens:       map[string]string{},
+		userTokens:   map[string]string{},
+		boards:       defaultBoards(),
+		posts:        []Post{},
+		comments:     []Comment{},
+		postVotes:    map[string]map[string]int{},
+		commentVotes: map[string]map[string]int{},
+		files:        map[string]FileMeta{},
+		messages:     map[string][]ChatMessage{},
 	}
 }
 
@@ -317,7 +324,7 @@ func (s *Store) GetComment(postID, commentID string) (Comment, bool) {
 }
 
 // CreateComment appends a comment to the store and returns it.
-func (s *Store) CreateComment(postID, authorID, content string) Comment {
+func (s *Store) CreateComment(postID, authorID, content, parentID string) Comment {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -325,6 +332,7 @@ func (s *Store) CreateComment(postID, authorID, content string) Comment {
 	comment := Comment{
 		ID:        fmt.Sprintf("c_%d", s.nextComment),
 		PostID:    postID,
+		ParentID:  parentID,
 		AuthorID:  authorID,
 		Content:   content,
 		CreatedAt: now(),
@@ -436,6 +444,75 @@ func (s *Store) ClearPostVote(postID, userID string) (int, int, error) {
 		delete(votes, userID)
 	}
 	score := sumVotes(s.postVotes[postID])
+	return score, 0, nil
+}
+
+// CommentScore returns the aggregated vote score for a comment.
+func (s *Store) CommentScore(postID, commentID string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if !s.commentExists(postID, commentID) {
+		return 0
+	}
+	return sumVotes(s.commentVotes[commentID])
+}
+
+// CommentVote returns the current user's vote value (-1/0/1) on a comment.
+func (s *Store) CommentVote(postID, commentID, userID string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if strings.TrimSpace(userID) == "" || !s.commentExists(postID, commentID) {
+		return 0
+	}
+	votes := s.commentVotes[commentID]
+	if votes == nil {
+		return 0
+	}
+	return votes[userID]
+}
+
+// VoteComment upserts a user's vote on a comment and returns the new score and my_vote.
+func (s *Store) VoteComment(postID, commentID, userID string, value int) (int, int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if value != 1 && value != -1 {
+		return 0, 0, ErrInvalidInput
+	}
+	if strings.TrimSpace(userID) == "" {
+		return 0, 0, ErrInvalidInput
+	}
+	if !s.commentExists(postID, commentID) {
+		return 0, 0, ErrNotFound
+	}
+
+	if s.commentVotes[commentID] == nil {
+		s.commentVotes[commentID] = map[string]int{}
+	}
+	s.commentVotes[commentID][userID] = value
+	score := sumVotes(s.commentVotes[commentID])
+	return score, value, nil
+}
+
+// ClearCommentVote removes a user's vote and returns the new score and my_vote.
+func (s *Store) ClearCommentVote(postID, commentID, userID string) (int, int, error) {
+	if strings.TrimSpace(userID) == "" {
+		return 0, 0, ErrInvalidInput
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if !s.commentExists(postID, commentID) {
+		return 0, 0, ErrNotFound
+	}
+
+	if votes := s.commentVotes[commentID]; votes != nil {
+		delete(votes, userID)
+	}
+	score := sumVotes(s.commentVotes[commentID])
 	return score, 0, nil
 }
 
@@ -591,6 +668,15 @@ var _ API = (*Store)(nil)
 func (s *Store) postExists(postID string) bool {
 	for _, post := range s.posts {
 		if post.ID == postID && post.DeletedAt == "" {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Store) commentExists(postID, commentID string) bool {
+	for _, comment := range s.comments {
+		if comment.PostID == postID && comment.ID == commentID && comment.DeletedAt == "" {
 			return true
 		}
 	}

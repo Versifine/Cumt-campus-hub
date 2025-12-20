@@ -105,6 +105,7 @@ func (s *SQLiteStore) migrate() error {
 			seq INTEGER NOT NULL,
 			id TEXT PRIMARY KEY,
 			post_id TEXT NOT NULL,
+			parent_id TEXT,
 			author_id TEXT NOT NULL,
 			content TEXT NOT NULL,
 			created_at TEXT NOT NULL,
@@ -117,7 +118,16 @@ func (s *SQLiteStore) migrate() error {
 			created_at TEXT NOT NULL,
 			PRIMARY KEY (post_id, user_id)
 		);`,
+		`CREATE TABLE IF NOT EXISTS comment_votes (
+			comment_id TEXT NOT NULL,
+			post_id TEXT NOT NULL,
+			user_id TEXT NOT NULL,
+			value INTEGER NOT NULL,
+			created_at TEXT NOT NULL,
+			PRIMARY KEY (comment_id, user_id)
+		);`,
 		`CREATE INDEX IF NOT EXISTS idx_post_votes_post ON post_votes(post_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_comment_votes_post ON comment_votes(post_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_comments_post_seq ON comments(post_id, seq);`,
 
 		`CREATE TABLE IF NOT EXISTS files (
@@ -198,6 +208,11 @@ func (s *SQLiteStore) migrate() error {
 			return err
 		}
 	}
+	if _, err := s.db.Exec(`ALTER TABLE comments ADD COLUMN parent_id TEXT;`); err != nil {
+		if !isSQLiteDuplicateColumnError(err) {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -215,6 +230,13 @@ func isSQLiteConstraintError(err error) bool {
 	}
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "constraint") || strings.Contains(msg, "unique")
+}
+
+func nullStringOrValue(value string) any {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	return value
 }
 
 func (s *SQLiteStore) seedBoards() error {
@@ -600,7 +622,7 @@ func (s *SQLiteStore) SoftDeletePost(postID, actorUserID string) error {
 
 func (s *SQLiteStore) Comments(postID string) []Comment {
 	rows, err := s.db.Query(
-		`SELECT id, post_id, author_id, content, created_at
+		`SELECT id, post_id, parent_id, author_id, content, created_at
 		 FROM comments
 		 WHERE post_id = ?
 		   AND (deleted_at IS NULL OR TRIM(deleted_at) = '')
@@ -615,9 +637,11 @@ func (s *SQLiteStore) Comments(postID string) []Comment {
 	var out []Comment
 	for rows.Next() {
 		var c Comment
-		if err := rows.Scan(&c.ID, &c.PostID, &c.AuthorID, &c.Content, &c.CreatedAt); err != nil {
+		var parentID sql.NullString
+		if err := rows.Scan(&c.ID, &c.PostID, &parentID, &c.AuthorID, &c.Content, &c.CreatedAt); err != nil {
 			return nil
 		}
+		c.ParentID = strings.TrimSpace(parentID.String)
 		out = append(out, c)
 	}
 	return out
@@ -641,23 +665,25 @@ func (s *SQLiteStore) CommentCount(postID string) int {
 func (s *SQLiteStore) GetComment(postID, commentID string) (Comment, bool) {
 	var comment Comment
 	var deletedAt sql.NullString
+	var parentID sql.NullString
 	err := s.db.QueryRow(
-		`SELECT id, post_id, author_id, content, created_at, deleted_at
+		`SELECT id, post_id, parent_id, author_id, content, created_at, deleted_at
 		 FROM comments
 		 WHERE post_id = ?
 		   AND id = ?
 		   AND (deleted_at IS NULL OR TRIM(deleted_at) = '');`,
 		postID,
 		commentID,
-	).Scan(&comment.ID, &comment.PostID, &comment.AuthorID, &comment.Content, &comment.CreatedAt, &deletedAt)
+	).Scan(&comment.ID, &comment.PostID, &parentID, &comment.AuthorID, &comment.Content, &comment.CreatedAt, &deletedAt)
 	if err != nil {
 		return Comment{}, false
 	}
+	comment.ParentID = strings.TrimSpace(parentID.String)
 	comment.DeletedAt = strings.TrimSpace(deletedAt.String)
 	return comment, true
 }
 
-func (s *SQLiteStore) CreateComment(postID, authorID, content string) Comment {
+func (s *SQLiteStore) CreateComment(postID, authorID, content, parentID string) Comment {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return Comment{}
@@ -672,17 +698,19 @@ func (s *SQLiteStore) CreateComment(postID, authorID, content string) Comment {
 	comment := Comment{
 		ID:        fmt.Sprintf("c_%d", seq),
 		PostID:    postID,
+		ParentID:  parentID,
 		AuthorID:  authorID,
 		Content:   content,
 		CreatedAt: nowRFC3339(),
 	}
 
 	if _, err := tx.Exec(
-		`INSERT INTO comments(seq, id, post_id, author_id, content, created_at, deleted_at)
-		 VALUES(?, ?, ?, ?, ?, ?, NULL);`,
+		`INSERT INTO comments(seq, id, post_id, parent_id, author_id, content, created_at, deleted_at)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, NULL);`,
 		seq,
 		comment.ID,
 		comment.PostID,
+		nullStringOrValue(comment.ParentID),
 		comment.AuthorID,
 		comment.Content,
 		comment.CreatedAt,
@@ -816,6 +844,93 @@ func (s *SQLiteStore) ClearPostVote(postID, userID string) (int, int, error) {
 	}
 
 	score := s.PostScore(postID)
+	return score, 0, nil
+}
+
+func (s *SQLiteStore) CommentScore(postID, commentID string) int {
+	var score int
+	err := s.db.QueryRow(
+		`SELECT COALESCE(SUM(value), 0)
+		 FROM comment_votes
+		 WHERE post_id = ? AND comment_id = ?;`,
+		postID,
+		commentID,
+	).Scan(&score)
+	if err != nil {
+		return 0
+	}
+	return score
+}
+
+func (s *SQLiteStore) CommentVote(postID, commentID, userID string) int {
+	if strings.TrimSpace(userID) == "" {
+		return 0
+	}
+	var value int
+	err := s.db.QueryRow(
+		`SELECT value
+		 FROM comment_votes
+		 WHERE post_id = ? AND comment_id = ? AND user_id = ?;`,
+		postID,
+		commentID,
+		userID,
+	).Scan(&value)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0
+	}
+	if err != nil {
+		return 0
+	}
+	return value
+}
+
+func (s *SQLiteStore) VoteComment(postID, commentID, userID string, value int) (int, int, error) {
+	if value != 1 && value != -1 {
+		return 0, 0, ErrInvalidInput
+	}
+	if strings.TrimSpace(userID) == "" {
+		return 0, 0, ErrInvalidInput
+	}
+	if _, ok := s.GetComment(postID, commentID); !ok {
+		return 0, 0, ErrNotFound
+	}
+
+	if _, err := s.db.Exec(
+		`INSERT INTO comment_votes (comment_id, post_id, user_id, value, created_at)
+		 VALUES (?, ?, ?, ?, ?)
+		 ON CONFLICT(comment_id, user_id)
+		 DO UPDATE SET value = excluded.value, post_id = excluded.post_id, created_at = excluded.created_at;`,
+		commentID,
+		postID,
+		userID,
+		value,
+		nowRFC3339(),
+	); err != nil {
+		return 0, 0, err
+	}
+
+	score := s.CommentScore(postID, commentID)
+	return score, value, nil
+}
+
+func (s *SQLiteStore) ClearCommentVote(postID, commentID, userID string) (int, int, error) {
+	if strings.TrimSpace(userID) == "" {
+		return 0, 0, ErrInvalidInput
+	}
+	if _, ok := s.GetComment(postID, commentID); !ok {
+		return 0, 0, ErrNotFound
+	}
+
+	if _, err := s.db.Exec(
+		`DELETE FROM comment_votes WHERE post_id = ? AND comment_id = ? AND user_id = ?;`,
+		postID,
+		commentID,
+		userID,
+	); err != nil {
+		return 0, 0, err
+	}
+
+	score := s.CommentScore(postID, commentID)
 	return score, 0, nil
 }
 

@@ -225,7 +225,9 @@
   "author_id": "u_123",
   "title": "string",
   "content": "string",
-  "created_at": "2025-01-01T00:00:00Z"
+  "created_at": "2025-01-01T00:00:00Z",
+  "score": 0,
+  "my_vote": 0
 }
 ```
 
@@ -290,9 +292,12 @@
 [
   {
     "id": "c_1",
+    "parent_id": null,
     "author": { "id": "u_123", "nickname": "alice" },
     "content": "string",
-    "created_at": "2025-01-01T00:00:00Z"
+    "created_at": "2025-01-01T00:00:00Z",
+    "score": 0,
+    "my_vote": 0
   }
 ]
 ```
@@ -306,12 +311,15 @@
 说明：
 
 - 若 `post_id` 不存在（或帖子已软删），返回 `404 not found`。
+- `parent_id` 空表示一级评论，非空表示回复某条评论。
+- parent_id 不存在时返回 400 + { "code": 2001, "message": "invalid parent_id" }
 
 请求：
 
 ```json
 {
-  "content": "string"
+  "content": "string",
+  "parent_id": "c_0"
 }
 ```
 
@@ -321,6 +329,7 @@
 {
   "id": "c_1",
   "post_id": "p_1",
+  "parent_id": "c_0",
   "author_id": "u_123",
   "content": "string",
   "created_at": "2025-01-01T00:00:00Z"
@@ -346,6 +355,39 @@
 - `401`：未登录/Token 无效（`code=1001`）
 - `403`：只能删除自己的评论（`code=1002`）
 - `404`：帖子/评论不存在或已删除（`code=2001`）
+
+---
+
+
+### 7.4 ???????/???????
+
+`POST /api/v1/posts/{post_id}/comments/{comment_id}/votes`
+
+??????Bearer Token?
+
+???
+```json
+{ "value": 1 }
+```
+
+???????
+```json
+{ "comment_id": "c_1", "score": 12, "my_vote": 1 }
+```
+
+`DELETE /api/v1/posts/{post_id}/comments/{comment_id}/votes`
+
+??????Bearer Token?
+
+???????
+```json
+{ "comment_id": "c_1", "score": 11, "my_vote": 0 }
+```
+
+?????
+- `400`?value ???`code=2001`?
+- `401`????/Token ???`code=1001`?
+- `404`???/??????????`code=2001`?
 
 ---
 

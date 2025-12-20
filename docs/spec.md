@@ -60,6 +60,7 @@
 * 版块（Boards）
 * 帖子（Posts）
 * 评论（Comments）
+* 楼中楼评论（parent_id）
 * 点赞 / 点踩 / 分值（Reactions，需持久化）
 * 评论按钮 + 评论数展示
 * Award（消耗用户资源，规则待后端设计）
@@ -118,9 +119,12 @@
 
 * id
 * post_id
+* parent_id
 * author_id
 * content
 * created_at
+* score
+* my_vote
 
 ### 4.5 ChatRoom
 

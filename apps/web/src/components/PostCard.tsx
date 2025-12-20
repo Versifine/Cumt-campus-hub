@@ -114,8 +114,14 @@ const PostCard = ({ post }: PostCardProps) => {
     }
   }
 
-  const stopCardNavigation = (event: MouseEvent<HTMLButtonElement>) => {
+  const stopCardNavigation = (event: MouseEvent<HTMLElement>) => {
     event.preventDefault()
+    event.stopPropagation()
+  }
+
+  const stopCardPropagation = (
+    event: MouseEvent<HTMLElement> | KeyboardEvent<HTMLElement>,
+  ) => {
     event.stopPropagation()
   }
 
@@ -183,6 +189,19 @@ const PostCard = ({ post }: PostCardProps) => {
       <div className="post-card__body">
         <div className="post-card__top">
           <h3 className="post-card__title">{post.title}</h3>
+          <details className="action-menu post-card__menu">
+            <summary
+              className="action-menu__trigger"
+              aria-label="更多操作"
+              onClick={stopCardPropagation}
+              onKeyDown={stopCardPropagation}
+            >
+              ...
+            </summary>
+            <div className="action-menu__panel" role="menu" onClick={stopCardPropagation}>
+              <span className="action-menu__empty">暂无操作</span>
+            </div>
+          </details>
         </div>
         <div className="post-card__meta">
           {metaItems.map((item, index) => (

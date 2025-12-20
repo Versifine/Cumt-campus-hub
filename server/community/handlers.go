@@ -98,6 +98,20 @@ func (h *Handler) Comment(postID, commentID string) http.HandlerFunc {
 	}
 }
 
+// CommentVotes handles POST/DELETE /api/v1/posts/{post_id}/comments/{comment_id}/votes.
+func (h *Handler) CommentVotes(postID, commentID string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPost:
+			h.voteComment(w, r, postID, commentID)
+		case http.MethodDelete:
+			h.clearCommentVote(w, r, postID, commentID)
+		default:
+			transport.WriteError(w, http.StatusMethodNotAllowed, 2001, "method not allowed")
+		}
+	}
+}
+
 func (h *Handler) listPosts(w http.ResponseWriter, r *http.Request) {
 	boardID := r.URL.Query().Get("board_id")
 	page := parsePositiveInt(r.URL.Query().Get("page"), 1)
@@ -209,24 +223,38 @@ func (h *Handler) createPost(w http.ResponseWriter, r *http.Request) {
 	transport.WriteJSON(w, http.StatusOK, resp)
 }
 
-func (h *Handler) listComments(w http.ResponseWriter, _ *http.Request, postID string) {
+func (h *Handler) listComments(w http.ResponseWriter, r *http.Request, postID string) {
 	if _, ok := h.Store.GetPost(postID); !ok {
 		transport.WriteError(w, http.StatusNotFound, 2001, "not found")
 		return
 	}
 
+	viewerID := h.viewerID(r)
 	comments := h.Store.Comments(postID)
 	items := make([]commentItem, 0, len(comments))
 	for _, comment := range comments {
 		author, _ := h.Store.GetUser(comment.AuthorID)
+		var parentID *string
+		if strings.TrimSpace(comment.ParentID) != "" {
+			value := comment.ParentID
+			parentID = &value
+		}
+		score := h.Store.CommentScore(postID, comment.ID)
+		myVote := 0
+		if viewerID != "" {
+			myVote = h.Store.CommentVote(postID, comment.ID, viewerID)
+		}
 		items = append(items, commentItem{
-			ID: comment.ID,
+			ID:       comment.ID,
+			ParentID: parentID,
 			Author: userSummary{
 				ID:       author.ID,
 				Nickname: author.Nickname,
 			},
 			Content:   comment.Content,
 			CreatedAt: comment.CreatedAt,
+			Score:     score,
+			MyVote:    myVote,
 		})
 	}
 
@@ -248,7 +276,8 @@ func (h *Handler) createComment(w http.ResponseWriter, r *http.Request, postID s
 	}
 
 	var req struct {
-		Content string `json:"content"`
+		Content  string `json:"content"`
+		ParentID string `json:"parent_id"`
 	}
 	if err := transport.ReadJSON(r, &req); err != nil {
 		transport.WriteError(w, http.StatusBadRequest, 2001, "invalid json")
@@ -258,20 +287,38 @@ func (h *Handler) createComment(w http.ResponseWriter, r *http.Request, postID s
 		transport.WriteError(w, http.StatusBadRequest, 2001, "missing content")
 		return
 	}
+	parentIDValue := strings.TrimSpace(req.ParentID)
+	if parentIDValue != "" {
+		if _, ok := h.Store.GetComment(postID, parentIDValue); !ok {
+			transport.WriteError(w, http.StatusBadRequest, 2001, "invalid parent_id")
+			return
+		}
+	}
 
-	comment := h.Store.CreateComment(postID, user.ID, req.Content)
+	comment := h.Store.CreateComment(postID, user.ID, req.Content, parentIDValue)
+	var parentID *string
+	if strings.TrimSpace(comment.ParentID) != "" {
+		value := comment.ParentID
+		parentID = &value
+	}
 	resp := struct {
-		ID        string `json:"id"`
-		PostID    string `json:"post_id"`
-		AuthorID  string `json:"author_id"`
-		Content   string `json:"content"`
-		CreatedAt string `json:"created_at"`
+		ID        string  `json:"id"`
+		PostID    string  `json:"post_id"`
+		ParentID  *string `json:"parent_id"`
+		AuthorID  string  `json:"author_id"`
+		Content   string  `json:"content"`
+		CreatedAt string  `json:"created_at"`
+		Score     int     `json:"score"`
+		MyVote    int     `json:"my_vote"`
 	}{
 		ID:        comment.ID,
 		PostID:    comment.PostID,
+		ParentID:  parentID,
 		AuthorID:  comment.AuthorID,
 		Content:   comment.Content,
 		CreatedAt: comment.CreatedAt,
+		Score:     0,
+		MyVote:    0,
 	}
 
 	transport.WriteJSON(w, http.StatusOK, resp)
@@ -446,6 +493,72 @@ func (h *Handler) clearVote(w http.ResponseWriter, r *http.Request, postID strin
 	transport.WriteJSON(w, http.StatusOK, resp)
 }
 
+func (h *Handler) voteComment(w http.ResponseWriter, r *http.Request, postID, commentID string) {
+	user, ok := h.Auth.RequireUser(w, r)
+	if !ok {
+		return
+	}
+
+	var req struct {
+		Value int `json:"value"`
+	}
+	if err := transport.ReadJSON(r, &req); err != nil {
+		transport.WriteError(w, http.StatusBadRequest, 2001, "invalid json")
+		return
+	}
+	if req.Value != 1 && req.Value != -1 {
+		transport.WriteError(w, http.StatusBadRequest, 2001, "invalid vote value")
+		return
+	}
+
+	score, myVote, err := h.Store.VoteComment(postID, commentID, user.ID, req.Value)
+	if err != nil {
+		switch err {
+		case store.ErrNotFound:
+			transport.WriteError(w, http.StatusNotFound, 2001, "not found")
+		case store.ErrInvalidInput:
+			transport.WriteError(w, http.StatusBadRequest, 2001, "invalid input")
+		default:
+			transport.WriteError(w, http.StatusInternalServerError, 5000, "server error")
+		}
+		return
+	}
+
+	resp := map[string]any{
+		"comment_id": commentID,
+		"score":      score,
+		"my_vote":    myVote,
+	}
+	transport.WriteJSON(w, http.StatusOK, resp)
+}
+
+func (h *Handler) clearCommentVote(w http.ResponseWriter, r *http.Request, postID, commentID string) {
+	user, ok := h.Auth.RequireUser(w, r)
+	if !ok {
+		return
+	}
+
+	score, myVote, err := h.Store.ClearCommentVote(postID, commentID, user.ID)
+	if err != nil {
+		switch err {
+		case store.ErrNotFound:
+			transport.WriteError(w, http.StatusNotFound, 2001, "not found")
+		case store.ErrInvalidInput:
+			transport.WriteError(w, http.StatusBadRequest, 2001, "invalid input")
+		default:
+			transport.WriteError(w, http.StatusInternalServerError, 5000, "server error")
+		}
+		return
+	}
+
+	resp := map[string]any{
+		"comment_id": commentID,
+		"score":      score,
+		"my_vote":    myVote,
+	}
+	transport.WriteJSON(w, http.StatusOK, resp)
+}
+
 func (h *Handler) allowWrite(limiter *ratelimit.FixedWindow, r *http.Request, userID string) bool {
 	ip := clientIP(r)
 	if ip != "" && !limiter.Allow("ip:"+ip) {
@@ -498,9 +611,12 @@ type boardSummary struct {
 
 type commentItem struct {
 	ID        string      `json:"id"`
+	ParentID  *string     `json:"parent_id"`
 	Author    userSummary `json:"author"`
 	Content   string      `json:"content"`
 	CreatedAt string      `json:"created_at"`
+	Score     int         `json:"score"`
+	MyVote    int         `json:"my_vote"`
 }
 
 type userSummary struct {

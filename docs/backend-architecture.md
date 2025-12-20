@@ -146,6 +146,8 @@ WebSocket 的鉴权方式在 Demo 里更简单（见 `server/chat/handler.go`）
 - `sync.Mutex`：保证并发安全（多个请求同时读写）
 - ID 生成：`u_1` / `p_1` / `c_1` / `f_1` / `m_1`（带前缀，便于肉眼识别类型）
 - 时间：统一 `UTC RFC3339`（`time.Now().UTC().Format(time.RFC3339)`）
+- 评论支持 `parent_id` 记录楼中楼关系（SQLite comments 表新增 parent_id 字段）。
+- 评论点赞/点踩持久化在 comment_votes 表（score 由投票汇总）。
 
 新手建议的理解方式：
 
