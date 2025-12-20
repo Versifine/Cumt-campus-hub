@@ -11,7 +11,7 @@ const PostPlaceholder = () => {
         <div className="post-placeholder__card">
           <div className="post-placeholder__title">Post ID: {id}</div>
           <p className="post-placeholder__text">
-            Post detail view will be available in the next milestone.
+            该页面为占位，后续接入帖子详情接口。
           </p>
           <Link className="back-link" to="/">
             Back to feed

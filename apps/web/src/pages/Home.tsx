@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { fetchBoards } from '../api/boards'
 import { getErrorMessage } from '../api/client'
 import { fetchPosts } from '../api/posts'
@@ -95,6 +96,11 @@ const Home = () => {
               <EmptyState
                 title="No posts yet"
                 description="Be the first to start a discussion."
+                action={
+                  <Link className="retry-button" to="/post/demo">
+                    查看示例帖子
+                  </Link>
+                }
               />
             ) : (
               <div className="post-list">
