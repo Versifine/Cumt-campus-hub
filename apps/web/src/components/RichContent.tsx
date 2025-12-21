@@ -3,6 +3,9 @@ import { EditorContent, useEditor } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Link from '@tiptap/extension-link'
 import Image from '@tiptap/extension-image'
+import Document from '@tiptap/extension-document'
+import Paragraph from '@tiptap/extension-paragraph'
+import Text from '@tiptap/extension-text'
 
 type RichContentProps = {
   contentJson?: unknown
@@ -34,7 +37,14 @@ const RichContent = ({ contentJson, contentText }: RichContentProps) => {
 
   const editor = useEditor({
     extensions: [
-      StarterKit,
+      Document,
+      Paragraph,
+      Text,
+      StarterKit.configure({
+        document: false,
+        paragraph: false,
+        text: false,
+      }),
       Link.configure({
         openOnClick: true,
         HTMLAttributes: {
