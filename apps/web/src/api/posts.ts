@@ -5,12 +5,19 @@ export type PostAuthor = {
   nickname: string
 }
 
+export type AttachmentItem = {
+  id: string
+  filename: string
+  url: string
+}
+
 export type PostItem = {
   id: string
   title: string
   author: PostAuthor
   created_at: string
   content?: string
+  attachments?: AttachmentItem[]
   board?: PostDetailBoard
   score?: number
   comment_count?: number
@@ -34,6 +41,7 @@ export type PostDetail = {
   author: PostAuthor
   title: string
   content: string
+  attachments?: AttachmentItem[]
   created_at: string
   deleted_at: string | null
   score?: number
@@ -45,6 +53,7 @@ export type CreatePostInput = {
   board_id: string
   title: string
   content: string
+  attachments?: string[]
 }
 
 export type CreatePostResponse = {
@@ -53,6 +62,7 @@ export type CreatePostResponse = {
   author_id: string
   title: string
   content: string
+  attachments?: AttachmentItem[]
   created_at: string
 }
 
@@ -64,6 +74,7 @@ export type CommentItem = {
   id: string
   author: PostAuthor
   content: string
+  attachments?: AttachmentItem[]
   created_at: string
   parent_id?: string | null
   score?: number
@@ -75,6 +86,7 @@ export type CreateCommentResponse = {
   post_id: string
   author_id: string
   content: string
+  attachments?: AttachmentItem[]
   created_at: string
   parent_id?: string | null
   score?: number
@@ -122,7 +134,14 @@ export const createPost = (
 ): Promise<CreatePostResponse> =>
   apiRequest<CreatePostResponse>('/posts', {
     method: 'POST',
-    body: JSON.stringify(payload),
+    body: JSON.stringify({
+      board_id: payload.board_id,
+      title: payload.title,
+      content: payload.content,
+      ...(payload.attachments && payload.attachments.length > 0
+        ? { attachments: payload.attachments }
+        : {}),
+    }),
   })
 
 export const deletePost = (postId: string): Promise<DeletePostResponse> =>
@@ -137,12 +156,14 @@ export const createComment = (
   postId: string,
   content: string,
   parentId?: string | null,
+  attachments?: string[],
 ): Promise<CreateCommentResponse> =>
   apiRequest<CreateCommentResponse>(`/posts/${postId}/comments`, {
     method: 'POST',
     body: JSON.stringify({
       content,
       ...(parentId ? { parent_id: parentId } : {}),
+      ...(attachments && attachments.length > 0 ? { attachments } : {}),
     }),
   })
 
