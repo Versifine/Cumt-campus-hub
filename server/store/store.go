@@ -29,12 +29,12 @@ type API interface {
 
 	Posts(boardID string) []Post
 	GetPost(postID string) (Post, bool)
-	CreatePost(boardID, authorID, title, content string) Post
+	CreatePost(boardID, authorID, title, content, contentJSON string, tags, attachments []string) Post
 	SoftDeletePost(postID, actorUserID string) error
 
 	Comments(postID string) []Comment
 	GetComment(postID, commentID string) (Comment, bool)
-	CreateComment(postID, authorID, content, parentID string) Comment
+	CreateComment(postID, authorID, content, contentJSON, parentID string, tags, attachments []string) Comment
 	SoftDeleteComment(postID, commentID, actorUserID string) error
 	CommentCount(postID string) int
 
@@ -67,24 +67,30 @@ type Board struct {
 
 // Post is a forum post stored in memory for the demo.
 type Post struct {
-	ID        string
-	BoardID   string
-	AuthorID  string
-	Title     string
-	Content   string
-	CreatedAt string
-	DeletedAt string
+	ID          string
+	BoardID     string
+	AuthorID    string
+	Title       string
+	Content     string
+	ContentJSON string
+	Tags        []string
+	Attachments []string
+	CreatedAt   string
+	DeletedAt   string
 }
 
 // Comment is a reply under a post.
 type Comment struct {
-	ID        string
-	PostID    string
-	ParentID  string
-	AuthorID  string
-	Content   string
-	CreatedAt string
-	DeletedAt string
+	ID          string
+	PostID      string
+	ParentID    string
+	AuthorID    string
+	Content     string
+	ContentJSON string
+	Tags        []string
+	Attachments []string
+	CreatedAt   string
+	DeletedAt   string
 }
 
 // ChatMessage is a message stored per room for history queries.
@@ -257,18 +263,25 @@ func (s *Store) GetPost(postID string) (Post, bool) {
 }
 
 // CreatePost appends a post to the store and returns it.
-func (s *Store) CreatePost(boardID, authorID, title, content string) Post {
+func (s *Store) CreatePost(boardID, authorID, title, content, contentJSON string, tags, attachments []string) Post {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	s.nextPostID++
+	storedAttachments := make([]string, len(attachments))
+	copy(storedAttachments, attachments)
+	storedTags := make([]string, len(tags))
+	copy(storedTags, tags)
 	post := Post{
-		ID:        fmt.Sprintf("p_%d", s.nextPostID),
-		BoardID:   boardID,
-		AuthorID:  authorID,
-		Title:     title,
-		Content:   content,
-		CreatedAt: now(),
+		ID:          fmt.Sprintf("p_%d", s.nextPostID),
+		BoardID:     boardID,
+		AuthorID:    authorID,
+		Title:       title,
+		Content:     content,
+		ContentJSON: contentJSON,
+		Tags:        storedTags,
+		Attachments: storedAttachments,
+		CreatedAt:   now(),
 	}
 	s.posts = append(s.posts, post)
 	return post
@@ -324,18 +337,25 @@ func (s *Store) GetComment(postID, commentID string) (Comment, bool) {
 }
 
 // CreateComment appends a comment to the store and returns it.
-func (s *Store) CreateComment(postID, authorID, content, parentID string) Comment {
+func (s *Store) CreateComment(postID, authorID, content, contentJSON, parentID string, tags, attachments []string) Comment {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	s.nextComment++
+	storedAttachments := make([]string, len(attachments))
+	copy(storedAttachments, attachments)
+	storedTags := make([]string, len(tags))
+	copy(storedTags, tags)
 	comment := Comment{
-		ID:        fmt.Sprintf("c_%d", s.nextComment),
-		PostID:    postID,
-		ParentID:  parentID,
-		AuthorID:  authorID,
-		Content:   content,
-		CreatedAt: now(),
+		ID:          fmt.Sprintf("c_%d", s.nextComment),
+		PostID:      postID,
+		ParentID:    parentID,
+		AuthorID:    authorID,
+		Content:     content,
+		ContentJSON: contentJSON,
+		Tags:        storedTags,
+		Attachments: storedAttachments,
+		CreatedAt:   now(),
 	}
 	s.comments = append(s.comments, comment)
 	return comment

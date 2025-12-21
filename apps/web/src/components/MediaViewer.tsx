@@ -1,4 +1,4 @@
-import {
+﻿import {
   useCallback,
   useEffect,
   useMemo,
@@ -97,7 +97,7 @@ const MediaViewer = ({ items, open, startIndex = 0, onClose }: MediaViewerProps)
     if (!open) {
       return
     }
-  const handler = (event: KeyboardEvent) => {
+    const handler = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         handleClose()
       }
@@ -215,11 +215,7 @@ const MediaViewer = ({ items, open, startIndex = 0, onClose }: MediaViewerProps)
   return (
     <div className="media-viewer" role="dialog" aria-modal="true" aria-label="媒体查看">
       <div className="media-viewer__backdrop" onClick={handleClose} />
-      <div
-        className="media-viewer__panel"
-        ref={panelRef}
-        onKeyDown={handlePanelKeyDown}
-      >
+      <div className="media-viewer__panel" ref={panelRef} onKeyDown={handlePanelKeyDown}>
         <header className="media-viewer__header">
           <div className="media-viewer__meta">
             <span className="media-viewer__index">
@@ -245,11 +241,7 @@ const MediaViewer = ({ items, open, startIndex = 0, onClose }: MediaViewerProps)
             </button>
           </div>
         </header>
-        <div
-          className="media-viewer__body"
-          onTouchStart={handleTouchStart}
-          onTouchEnd={handleTouchEnd}
-        >
+        <div className="media-viewer__body" onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
           {canNavigate ? (
             <button
               type="button"
@@ -257,7 +249,7 @@ const MediaViewer = ({ items, open, startIndex = 0, onClose }: MediaViewerProps)
               onClick={goPrev}
               aria-label="上一张"
             >
-              ‹
+              {'<'}
             </button>
           ) : null}
           <div
@@ -309,7 +301,7 @@ const MediaViewer = ({ items, open, startIndex = 0, onClose }: MediaViewerProps)
               onClick={goNext}
               aria-label="下一张"
             >
-              ›
+              {'>'}
             </button>
           ) : null}
         </div>

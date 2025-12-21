@@ -108,6 +108,9 @@
 * author_id
 * title
 * content
+* content_json???? JSON????
+* tags?string[]????
+* attachments（图片/视频附件 ID 列表，可选）
 * created_at
 * score（分值，默认 0，后端持久化）
 * comment_count（评论数）
@@ -129,6 +132,9 @@
 * parent_id
 * author_id
 * content
+* content_json???? JSON????
+* tags?string[]????
+* attachments（图片/视频附件 ID 列表，可选）
 * created_at
 * score
 * my_vote

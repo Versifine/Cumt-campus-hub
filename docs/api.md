@@ -217,6 +217,9 @@
         "id": "u_123",
         "nickname": "alice"
       },
+      "attachments": [
+        { "id": "f_1", "filename": "photo.jpg", "url": "/files/f_1" }
+      ],
       "created_at": "2025-01-01T00:00:00Z"
     }
   ],
@@ -236,13 +239,16 @@
 {
   "board_id": "b_1",
   "title": "string",
-  "content": "string"
+  "content": "string",
+  "attachments": ["f_1", "f_2"]
 }
 ```
 
 说明：
 
 - `board_id` 必须是存在的版块，否则返回 `400` + `{ "code": 2001, "message": "invalid board_id" }`。
+- `attachments` 可选，元素为 `/api/v1/files` 返回的文件 ID，最多 6 个。
+- `content` 为空时需至少上传 1 个附件。
 
 响应（示例）：
 
@@ -253,6 +259,9 @@
   "author_id": "u_123",
   "title": "string",
   "content": "string",
+  "attachments": [
+    { "id": "f_1", "filename": "photo.jpg", "url": "/files/f_1" }
+  ],
   "created_at": "2025-01-01T00:00:00Z",
   "score": 0,
   "my_vote": 0
@@ -279,6 +288,9 @@
   "author": { "id": "u_123", "nickname": "alice" },
   "title": "string",
   "content": "string",
+  "attachments": [
+    { "id": "f_1", "filename": "photo.jpg", "url": "/files/f_1" }
+  ],
   "created_at": "2025-01-01T00:00:00Z",
   "deleted_at": null
 }
@@ -323,6 +335,9 @@
     "parent_id": null,
     "author": { "id": "u_123", "nickname": "alice" },
     "content": "string",
+    "attachments": [
+      { "id": "f_1", "filename": "photo.jpg", "url": "/files/f_1" }
+    ],
     "created_at": "2025-01-01T00:00:00Z",
     "score": 0,
     "my_vote": 0
@@ -341,13 +356,16 @@
 - 若 `post_id` 不存在（或帖子已软删），返回 `404 not found`。
 - `parent_id` 空表示一级评论，非空表示回复某条评论。
 - parent_id 不存在时返回 400 + { "code": 2001, "message": "invalid parent_id" }
+- `attachments` 可选，元素为 `/api/v1/files` 返回的文件 ID，最多 3 个。
+- `content` 为空时需至少上传 1 个附件。
 
 请求：
 
 ```json
 {
   "content": "string",
-  "parent_id": "c_0"
+  "parent_id": "c_0",
+  "attachments": ["f_1"]
 }
 ```
 
@@ -360,6 +378,9 @@
   "parent_id": "c_0",
   "author_id": "u_123",
   "content": "string",
+  "attachments": [
+    { "id": "f_1", "filename": "photo.jpg", "url": "/files/f_1" }
+  ],
   "created_at": "2025-01-01T00:00:00Z"
 }
 ```
@@ -437,6 +458,11 @@
 
 * multipart/form-data
 * 字段名：`file`
+
+说明：
+
+- 仅支持图片/视频附件（前端会做限制）
+- 单文件最大 100MB
 
 响应：
 
@@ -610,3 +636,73 @@
 ---
 
 > 本 API 文档为 **Demo 阶段 v0.2**，后续修改需同步更新并记录于 `decision-log.md`。
+
+---
+
+## 13. ????????????
+
+### 13.1 ????????
+
+`POST /api/uploads/images`
+
+??????Bearer Token?
+
+???
+- `multipart/form-data`
+- ????`file`
+
+???
+- ??? `image/*`
+- ???? 100MB
+
+???
+
+```json
+{ "url": "/files/f_123", "width": 1024, "height": 768 }
+```
+
+???
+- `url` ????? `content_json` ? image ??? `src`
+
+### 13.2 ??????
+
+`POST /api/v1/posts`
+
+????????/?????
+- `content_json`???? JSON?TipTap?
+- `tags`?`string[]`
+- `content`????????????????/?????
+
+?????
+- ? `content` / `content_json` / `attachments` ???????? `400` + `{ "code": 2001, "message": "invalid content" }`
+
+???
+
+```json
+{
+  "board_id": "b_1",
+  "title": "string",
+  "content": "plain text",
+  "content_json": { "type": "doc", "content": [] },
+  "tags": ["tag1", "tag2"]
+}
+```
+
+### 13.3 ??????
+
+`POST /api/v1/posts/{post_id}/comments`
+
+????????/?????
+- `content_json`???? JSON?TipTap?
+- `tags`?`string[]`
+- `content`??????
+
+???
+
+```json
+{
+  "content": "plain text",
+  "content_json": { "type": "doc", "content": [] },
+  "tags": ["tag1"]
+}
+```

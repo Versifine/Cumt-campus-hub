@@ -4,14 +4,12 @@
   useMemo,
   useRef,
   useState,
-  type ChangeEvent,
   type CSSProperties,
   type FormEvent,
 } from 'react'
-import type { ClipboardEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { getErrorMessage } from '../api/client'
-import { uploadFile } from '../api/files'
+import { uploadInlineImage } from '../api/uploads'
 import {
   createComment,
   clearCommentVote,
@@ -22,16 +20,19 @@ import {
   fetchPostDetail,
   votePost,
   voteComment,
-  type AttachmentItem,
   type CommentItem,
   type PostDetail,
 } from '../api/posts'
 import CommentMediaBlock from '../components/CommentMediaBlock'
+import RichContent from '../components/RichContent'
+import RichEditor, { type RichEditorHandle, type RichEditorValue } from '../components/RichEditor'
 import SiteHeader from '../components/SiteHeader'
 import { ErrorState } from '../components/StateBlocks'
+import TagInput from '../components/TagInput'
 import InlineAvatar from '../components/InlineAvatar'
 import { useAuth } from '../context/AuthContext'
-import { normalizeCommentMedia, normalizeMediaFromAttachments } from '../utils/media'
+import { normalizeCommentMedia, extractMediaFromContent } from '../utils/media'
+import { clearDraft, loadDraft, saveDraft } from '../utils/drafts'
 import { formatRelativeTimeUTC8 } from '../utils/time'
 
 type LoadState<T> = {
@@ -52,37 +53,9 @@ const normalizeVote = (value: number | undefined): VoteState => {
   return 0
 }
 
-const maxCommentAttachments = 3
-const maxFileSize = 100 * 1024 * 1024
-const imageExtensions = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif'])
-const videoExtensions = new Set(['mp4', 'webm', 'ogg'])
+const maxInlineImageSize = 100 * 1024 * 1024
 
-const getFileExtension = (filename: string) => {
-  const parts = filename.split('.')
-  if (parts.length < 2) {
-    return ''
-  }
-  return parts[parts.length - 1].toLowerCase()
-}
-
-const getAttachmentKind = (filename: string) => {
-  const ext = getFileExtension(filename)
-  if (imageExtensions.has(ext)) {
-    return 'image'
-  }
-  if (videoExtensions.has(ext)) {
-    return 'video'
-  }
-  return 'file'
-}
-
-const isSupportedMedia = (file: File) => {
-  if (file.type.startsWith('image/') || file.type.startsWith('video/')) {
-    return true
-  }
-  const ext = getFileExtension(file.name)
-  return imageExtensions.has(ext) || videoExtensions.has(ext)
-}
+const isSupportedImage = (file: File) => file.type.startsWith('image/')
 
 type ThreadedComment = CommentItem & {
   children: ThreadedComment[]
@@ -128,11 +101,13 @@ const getAuthorAvatar = (author: CommentItem['author']) => {
   return record.avatar_url ?? null
 }
 
+const commentDraftKey = (postId: string) => `draft:comment:${postId}`
+
 const PostPlaceholder = () => {
   const { id } = useParams()
   const navigate = useNavigate()
   const { user } = useAuth()
-  const commentInputRef = useRef<HTMLTextAreaElement | null>(null)
+  const commentEditorRef = useRef<RichEditorHandle | null>(null)
   const [state, setState] = useState<LoadState<PostDetail | null>>({
     data: null,
     loading: true,
@@ -143,10 +118,12 @@ const PostPlaceholder = () => {
     loading: true,
     error: null,
   })
-  const [commentDraft, setCommentDraft] = useState('')
-  const [commentAttachments, setCommentAttachments] = useState<AttachmentItem[]>([])
-  const [commentUploadError, setCommentUploadError] = useState<string | null>(null)
-  const [commentUploading, setCommentUploading] = useState(false)
+  const [commentDraft, setCommentDraft] = useState<RichEditorValue>({
+    json: null,
+    text: '',
+  })
+  const [commentTags, setCommentTags] = useState<string[]>([])
+  const [commentDraftHint, setCommentDraftHint] = useState<string | null>(null)
   const [replyTarget, setReplyTarget] = useState<{ id: string; nickname: string } | null>(
     null,
   )
@@ -169,6 +146,10 @@ const PostPlaceholder = () => {
     () => buildCommentTree(commentsState.data),
     [commentsState.data],
   )
+  const canSubmitComment = useMemo(() => {
+    const mediaItems = extractMediaFromContent(commentDraft.json)
+    return commentDraft.text.trim() !== '' || mediaItems.length > 0
+  }, [commentDraft])
 
   const loadPost = useCallback(async () => {
     if (!id) {
@@ -224,6 +205,44 @@ const PostPlaceholder = () => {
     void loadComments()
   }, [loadComments, loadPost])
 
+  useEffect(() => {
+    if (!id) {
+      return
+    }
+    const draft = loadDraft<{
+      content: RichEditorValue
+      tags: string[]
+    }>(commentDraftKey(id))
+    if (!draft) {
+      return
+    }
+    setCommentDraft(draft.data.content)
+    setCommentTags(draft.data.tags)
+  }, [id])
+
+  useEffect(() => {
+    if (!id) {
+      return
+    }
+    const hasDraft =
+      commentDraft.text.trim() !== '' ||
+      Boolean(commentDraft.json) ||
+      commentTags.length > 0
+    if (!hasDraft) {
+      clearDraft(commentDraftKey(id))
+      return
+    }
+    const timer = window.setTimeout(() => {
+      saveDraft(commentDraftKey(id), {
+        content: commentDraft,
+        tags: commentTags,
+      })
+      setCommentDraftHint('草稿已保存')
+      window.setTimeout(() => setCommentDraftHint(null), 1200)
+    }, 1200)
+    return () => window.clearTimeout(timer)
+  }, [commentDraft, commentTags, id])
+
   const handleBack = () => {
     if (window.history.length > 1) {
       navigate(-1)
@@ -259,24 +278,26 @@ const PostPlaceholder = () => {
       return
     }
 
-    if (!commentDraft.trim() && commentAttachments.length === 0) {
-      setCommentError('请输入评论内容或上传附件')
+    const mediaItems = extractMediaFromContent(commentDraft.json)
+    if (!commentDraft.text.trim() && mediaItems.length === 0) {
+      setCommentError('请输入评论内容或插入图片')
       return
     }
 
     setCommentSubmitting(true)
 
     try {
-      await createComment(
-        id,
-        commentDraft.trim(),
-        replyTarget?.id ?? null,
-        commentAttachments.map((item) => item.id),
-      )
-      setCommentDraft('')
-      setCommentAttachments([])
+      await createComment(id, {
+        content: commentDraft.text.trim(),
+        content_json: commentDraft.json ?? undefined,
+        tags: commentTags,
+        parent_id: replyTarget?.id ?? null,
+      })
+      setCommentDraft({ json: null, text: '' })
+      setCommentTags([])
       setReplyTarget(null)
-      setCommentUploadError(null)
+      clearDraft(commentDraftKey(id))
+      commentEditorRef.current?.setContent(null)
       await loadComments()
     } catch (error) {
       setCommentError(getErrorMessage(error))
@@ -366,8 +387,7 @@ const PostPlaceholder = () => {
   }
 
   const handleFocusComment = () => {
-    commentInputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-    commentInputRef.current?.focus()
+    commentEditorRef.current?.focus()
   }
 
   const handlePostShare = async () => {
@@ -388,8 +408,8 @@ const PostPlaceholder = () => {
   const handleReply = (commentId: string, nickname: string) => {
     const mention = `@${nickname} `
     setReplyTarget({ id: commentId, nickname })
-    setCommentDraft((prev) => (prev ? `${prev}\n${mention}` : mention))
-    commentInputRef.current?.focus()
+    commentEditorRef.current?.insertText(mention)
+    commentEditorRef.current?.focus()
   }
 
   const handleCommentVote = async (commentId: string, nextVote: VoteState) => {
@@ -448,94 +468,32 @@ const PostPlaceholder = () => {
     }
   }
 
-  const uploadCommentAttachments = async (files: File[]) => {
-    if (files.length === 0) {
-      return
-    }
+  const handleInlineImageUpload = async (file: File) => {
     if (!user) {
-      setCommentUploadError('请先登录后上传附件')
-      return
+      setCommentError('请先登录后上传图片')
+      throw new Error('unauthorized')
     }
-    if (commentUploading) {
-      setCommentUploadError('正在上传，请稍后再试')
-      return
+    if (!isSupportedImage(file)) {
+      setCommentError('仅支持图片文件')
+      throw new Error('unsupported image')
     }
-
-    setCommentUploadError(null)
-
-    const remaining = maxCommentAttachments - commentAttachments.length
-    if (remaining <= 0) {
-      setCommentUploadError(`最多上传 ${maxCommentAttachments} 个附件`)
-      return
+    if (file.size > maxInlineImageSize) {
+      setCommentError('图片不能超过 100MB')
+      throw new Error('image too large')
     }
-
-    const selected = files.slice(0, remaining)
-    setCommentUploading(true)
-
-    try {
-      const uploaded: AttachmentItem[] = []
-      for (const file of selected) {
-        if (!isSupportedMedia(file)) {
-          setCommentUploadError('仅支持图片或视频文件')
-          continue
-        }
-        if (file.size > maxFileSize) {
-          setCommentUploadError('单个文件不能超过 100MB')
-          continue
-        }
-        const result = await uploadFile(file)
-        uploaded.push(result)
-      }
-      if (uploaded.length > 0) {
-        setCommentAttachments((prev) => [...prev, ...uploaded])
-      }
-    } catch (error) {
-      setCommentUploadError(getErrorMessage(error))
-    } finally {
-      setCommentUploading(false)
-    }
+    return uploadInlineImage(file)
   }
 
-  const handleCommentAttachmentChange = async (
-    event: ChangeEvent<HTMLInputElement>,
-  ) => {
-    const files = Array.from(event.target.files ?? [])
-    event.target.value = ''
-    await uploadCommentAttachments(files)
-  }
-
-  const handleCommentPaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
-    const items = Array.from(event.clipboardData?.items ?? [])
-    const files = items
-      .filter((item) => item.kind === 'file')
-      .map((item) => item.getAsFile())
-      .filter((file): file is File => Boolean(file))
-
-    if (files.length === 0) {
+  const handleSaveCommentDraft = () => {
+    if (!id) {
       return
     }
-
-    event.preventDefault()
-    void uploadCommentAttachments(files)
-  }
-
-  const handleRemoveCommentAttachment = (attachmentId: string) => {
-    setCommentAttachments((prev) => prev.filter((item) => item.id !== attachmentId))
-  }
-
-  const renderAttachmentPreview = (item: AttachmentItem) => {
-    const kind = getAttachmentKind(item.filename)
-    if (kind === 'image') {
-      return <img src={item.url} alt={item.filename} loading="lazy" />
-    }
-    if (kind === 'video') {
-      return <video src={item.url} controls preload="metadata" />
-    }
-    return (
-      <a className="attachment-link" href={item.url} target="_blank" rel="noreferrer">
-        {item.filename}
-      </a>
-    )
+    saveDraft(commentDraftKey(id), {
+      content: commentDraft,
+      tags: commentTags,
+    })
+    setCommentDraftHint('草稿已保存')
+    window.setTimeout(() => setCommentDraftHint(null), 1200)
   }
 
   const renderComment = (comment: ThreadedComment, depth: number) => {
@@ -590,7 +548,10 @@ const PostPlaceholder = () => {
               </div>
             </details>
           </div>
-          <div className="comment-content">{comment.content}</div>
+          <RichContent
+            contentJson={comment.content_json}
+            contentText={comment.content}
+          />
           <CommentMediaBlock media={commentMedia} variant="comment" />
           <div className="comment-actions">
             <div className="comment-vote-group" aria-label="点赞与点踩">
@@ -707,9 +668,15 @@ const PostPlaceholder = () => {
                   </>
                 ) : null}
               </div>
-              <div className="post-detail__content">{state.data.content}</div>
+              <RichContent
+                contentJson={state.data.content_json}
+                contentText={state.data.content}
+              />
               <CommentMediaBlock
-                media={normalizeMediaFromAttachments(state.data.attachments)}
+                media={normalizeCommentMedia({
+                  attachments: state.data.attachments,
+                  content_json: state.data.content_json,
+                })}
                 variant="post"
               />
               <div className="post-card__actions">
@@ -782,74 +749,42 @@ const PostPlaceholder = () => {
                       </button>
                     </div>
                   ) : null}
-                  <label className="form-field">
-                    <span className="form-label">发表评论</span>
-                    <textarea
-                      ref={commentInputRef}
-                      className="form-textarea"
-                      value={commentDraft}
-                      onChange={(event) => setCommentDraft(event.target.value)}
-                      onPaste={handleCommentPaste}
-                      placeholder="写下你的观点..."
-                      rows={4}
+                  <div className="editor-shell">
+                    <TagInput
+                      value={commentTags}
+                      onChange={setCommentTags}
+                      maxTags={6}
+                      placeholder="Add tags"
                     />
-                  </label>
-                  <div className="form-field">
-                    <span className="form-label">附件（图片/视频）</span>
-                    <div className="media-picker">
-                      <input
-                        id="comment-media-input"
-                        className="media-picker__input"
-                        type="file"
-                        accept="image/*,video/*"
-                        multiple
-                        onChange={handleCommentAttachmentChange}
-                        disabled={
-                          !user ||
-                          commentUploading ||
-                          commentAttachments.length >= maxCommentAttachments
-                        }
-                      />
-                      <label htmlFor="comment-media-input" className="media-picker__button">
-                        {commentUploading ? '上传中...' : '添加图片/视频'}
-                      </label>
-                      <span className="media-picker__hint">
-                        最多 {maxCommentAttachments} 个，单个不超过 100MB，支持粘贴
-                      </span>
+                    <RichEditor
+                      ref={commentEditorRef}
+                      value={commentDraft}
+                      onChange={setCommentDraft}
+                      onImageUpload={handleInlineImageUpload}
+                      placeholder="Body text (optional)"
+                      disabled={commentSubmitting}
+                    />
+                    {commentDraftHint ? (
+                      <div className="draft-hint">{commentDraftHint}</div>
+                    ) : null}
+                    <div className="editor-actions">
+                      <button
+                        type="button"
+                        className="btn btn-ghost"
+                        onClick={handleSaveCommentDraft}
+                        disabled={commentSubmitting}
+                      >
+                        Save Draft
+                      </button>
+                      <button
+                        type="submit"
+                        className="btn btn-primary"
+                        disabled={commentSubmitting || !canSubmitComment}
+                      >
+                        {commentSubmitting ? '提交中...' : 'Post'}
+                      </button>
                     </div>
                   </div>
-                  {commentUploadError ? (
-                    <div className="form-error">{commentUploadError}</div>
-                  ) : null}
-                  {commentAttachments.length > 0 ? (
-                    <div className="attachment-grid attachment-grid--compact">
-                      {commentAttachments.map((item) => (
-                        <div key={item.id} className="attachment-card">
-                          <div className="attachment-preview">
-                            {renderAttachmentPreview(item)}
-                          </div>
-                          <div className="attachment-meta">
-                            <span className="attachment-name">{item.filename}</span>
-                            <button
-                              type="button"
-                              className="attachment-remove"
-                              onClick={() => handleRemoveCommentAttachment(item.id)}
-                              disabled={commentUploading}
-                            >
-                              移除
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  ) : null}
-                  <button
-                    type="submit"
-                    className="btn btn-primary"
-                    disabled={commentSubmitting || commentUploading}
-                  >
-                    {commentSubmitting ? '提交中...' : '发表评论'}
-                  </button>
                 </form>
                 {!user ? (
                   <div className="form-note">

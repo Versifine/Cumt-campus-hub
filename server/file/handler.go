@@ -1,7 +1,12 @@
 package file
 
 import (
+	"bytes"
 	"fmt"
+	"image"
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
 	"io"
 	"net/http"
 	"os"
@@ -32,7 +37,8 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := r.ParseMultipartForm(10 << 20); err != nil {
+	r.Body = http.MaxBytesReader(w, r.Body, 100<<20)
+	if err := r.ParseMultipartForm(100 << 20); err != nil {
 		transport.WriteError(w, http.StatusBadRequest, 2001, "invalid multipart form")
 		return
 	}
@@ -85,6 +91,88 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 	transport.WriteJSON(w, http.StatusOK, resp)
 }
 
+// UploadImage handles POST /api/uploads/images (multipart/form-data, field name: file).
+func (h *Handler) UploadImage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		transport.WriteError(w, http.StatusMethodNotAllowed, 2001, "method not allowed")
+		return
+	}
+
+	user, ok := h.Auth.RequireUser(w, r)
+	if !ok {
+		return
+	}
+
+	const maxInlineImageSize = 100 << 20
+	r.Body = http.MaxBytesReader(w, r.Body, maxInlineImageSize)
+	if err := r.ParseMultipartForm(maxInlineImageSize); err != nil {
+		transport.WriteError(w, http.StatusBadRequest, 2001, "invalid multipart form")
+		return
+	}
+
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		transport.WriteError(w, http.StatusBadRequest, 2001, "missing file")
+		return
+	}
+	defer file.Close()
+
+	filename := sanitizeFilename(header.Filename)
+	if filename == "" {
+		transport.WriteError(w, http.StatusBadRequest, 2001, "invalid filename")
+		return
+	}
+
+	sniff := make([]byte, 512)
+	n, _ := file.Read(sniff)
+	contentType := http.DetectContentType(sniff[:n])
+	if !strings.HasPrefix(contentType, "image/") {
+		transport.WriteError(w, http.StatusBadRequest, 2001, "invalid image type")
+		return
+	}
+
+	if err := os.MkdirAll(h.UploadDir, 0o755); err != nil {
+		transport.WriteError(w, http.StatusInternalServerError, 5000, "failed to prepare storage")
+		return
+	}
+
+	storageKey := fmt.Sprintf("%d_%s", time.Now().UTC().UnixNano(), filename)
+	storagePath := filepath.Join(h.UploadDir, storageKey)
+
+	dst, err := os.Create(storagePath)
+	if err != nil {
+		transport.WriteError(w, http.StatusInternalServerError, 5000, "failed to save file")
+		return
+	}
+	defer dst.Close()
+
+	if _, err := io.Copy(dst, io.MultiReader(bytes.NewReader(sniff[:n]), file)); err != nil {
+		transport.WriteError(w, http.StatusInternalServerError, 5000, "failed to write file")
+		return
+	}
+
+	meta := h.Store.SaveFile(user.ID, filename, storageKey, storagePath)
+	width, height, ok := readImageSize(storagePath)
+	var widthValue *int
+	var heightValue *int
+	if ok {
+		widthValue = &width
+		heightValue = &height
+	}
+
+	resp := struct {
+		URL    string `json:"url"`
+		Width  *int   `json:"width,omitempty"`
+		Height *int   `json:"height,omitempty"`
+	}{
+		URL:    "/files/" + meta.ID,
+		Width:  widthValue,
+		Height: heightValue,
+	}
+
+	transport.WriteJSON(w, http.StatusOK, resp)
+}
+
 // Download returns a handler for GET /files/{file_id}.
 func (h *Handler) Download(fileID string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -114,4 +202,21 @@ func sanitizeFilename(name string) string {
 	cleaned = filepath.Base(cleaned)
 	cleaned = strings.TrimSpace(cleaned)
 	return cleaned
+}
+
+func readImageSize(path string) (int, int, bool) {
+	file, err := os.Open(path)
+	if err != nil {
+		return 0, 0, false
+	}
+	defer file.Close()
+
+	cfg, _, err := image.DecodeConfig(file)
+	if err != nil {
+		return 0, 0, false
+	}
+	if cfg.Width <= 0 || cfg.Height <= 0 {
+		return 0, 0, false
+	}
+	return cfg.Width, cfg.Height, true
 }

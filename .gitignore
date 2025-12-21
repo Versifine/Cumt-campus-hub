@@ -74,7 +74,7 @@ tmp/
 *.mdb
 *.logdb
 *.sql
-
+server/storage/
 
 # ===== 其他 =====
 AGENTS.md

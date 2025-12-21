@@ -1,6 +1,6 @@
 ﻿import { useEffect, useState, type KeyboardEvent, type MouseEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
-import type { PostItem } from '../api/posts'
+import type { AttachmentItem, PostItem } from '../api/posts'
 import { clearVote, votePost } from '../api/posts'
 import { getErrorMessage } from '../api/client'
 import { useAuth } from '../context/AuthContext'
@@ -12,6 +12,28 @@ type PostCardProps = {
 }
 
 type VoteState = -1 | 0 | 1
+
+const imageExtensions = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif'])
+const videoExtensions = new Set(['mp4', 'webm', 'ogg'])
+
+const getFileExtension = (filename: string) => {
+  const parts = filename.split('.')
+  if (parts.length < 2) {
+    return ''
+  }
+  return parts[parts.length - 1].toLowerCase()
+}
+
+const getAttachmentKind = (attachment: AttachmentItem) => {
+  const ext = getFileExtension(attachment.filename)
+  if (imageExtensions.has(ext)) {
+    return 'image'
+  }
+  if (videoExtensions.has(ext)) {
+    return 'video'
+  }
+  return 'file'
+}
 
 const getBoardName = (post: PostItem) => {
   const record = post as PostItem & {
@@ -56,6 +78,9 @@ const PostCard = ({ post }: PostCardProps) => {
   const baseScore = typeof post.score === 'number' ? post.score : 0
   const baseVote = normalizeVote(post.my_vote)
   const content = post.content?.trim()
+  const attachments = post.attachments ?? []
+  const primaryAttachment = attachments[0]
+  const extraAttachments = attachments.length > 1 ? attachments.length - 1 : 0
 
   const [vote, setVote] = useState<VoteState>(baseVote)
   const [score, setScore] = useState(baseScore)
@@ -151,6 +176,24 @@ const PostCard = ({ post }: PostCardProps) => {
     }
   }
 
+  const renderAttachmentPreview = (attachment: AttachmentItem) => {
+    const kind = getAttachmentKind(attachment)
+    if (kind === 'image') {
+      return <img src={attachment.url} alt={attachment.filename} loading="lazy" />
+    }
+    if (kind === 'video') {
+      return <video src={attachment.url} controls preload="metadata" />
+    }
+    return (
+      <div className="post-card__media-file">
+        <span className="post-card__media-icon" aria-hidden="true">
+          FILE
+        </span>
+        <span className="post-card__media-name">{attachment.filename}</span>
+      </div>
+    )
+  }
+
   return (
     <article
       className="post-card"
@@ -196,6 +239,14 @@ const PostCard = ({ post }: PostCardProps) => {
           {boardName ? <span className="post-card__badge">{boardName}</span> : null}
         </div>
         {content ? <p className="post-card__content">{content}</p> : null}
+        {primaryAttachment ? (
+          <div className="post-card__media" onClick={stopCardPropagation}>
+            {renderAttachmentPreview(primaryAttachment)}
+            {extraAttachments > 0 ? (
+              <span className="post-card__media-count">+{extraAttachments}</span>
+            ) : null}
+          </div>
+        ) : null}
         <div className="post-card__actions">
           <div className="post-card__vote-group" aria-label="点赞与点踩">
             <button

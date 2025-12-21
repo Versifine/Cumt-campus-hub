@@ -1,6 +1,7 @@
 package community
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/netip"
 	"strconv"
@@ -162,6 +163,9 @@ func (h *Handler) listPosts(w http.ResponseWriter, r *http.Request) {
 			ID:           post.ID,
 			Title:        post.Title,
 			Content:      post.Content,
+			ContentJSON:  safeJSON(post.ContentJSON),
+			Tags:         post.Tags,
+			Attachments:  h.attachmentsFromIDs(post.Attachments),
 			Score:        score,
 			CommentCount: commentCount,
 			MyVote:       myVote,
@@ -196,9 +200,12 @@ func (h *Handler) createPost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		BoardID string `json:"board_id"`
-		Title   string `json:"title"`
-		Content string `json:"content"`
+		BoardID     string          `json:"board_id"`
+		Title       string          `json:"title"`
+		Content     string          `json:"content"`
+		ContentJSON json.RawMessage `json:"content_json"`
+		Tags        []string        `json:"tags"`
+		Attachments []string        `json:"attachments"`
 	}
 	if err := transport.ReadJSON(r, &req); err != nil {
 		transport.WriteError(w, http.StatusBadRequest, 2001, "invalid json")
@@ -213,21 +220,45 @@ func (h *Handler) createPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	post := h.Store.CreatePost(req.BoardID, user.ID, req.Title, req.Content)
+	contentJSON := strings.TrimSpace(string(req.ContentJSON))
+	attachments := normalizeAttachmentIDs(req.Attachments)
+	if len(attachments) > maxPostAttachments {
+		transport.WriteError(w, http.StatusBadRequest, 2001, "too many attachments")
+		return
+	}
+	for _, fileID := range attachments {
+		if _, ok := h.Store.GetFile(fileID); !ok {
+			transport.WriteError(w, http.StatusBadRequest, 2001, "invalid attachment_id")
+			return
+		}
+	}
+
+	if strings.TrimSpace(req.Content) == "" && contentJSON == "" && len(attachments) == 0 {
+		transport.WriteError(w, http.StatusBadRequest, 2001, "missing content")
+		return
+	}
+	tags := normalizeTags(req.Tags, maxPostTags)
+	post := h.Store.CreatePost(req.BoardID, user.ID, req.Title, req.Content, contentJSON, tags, attachments)
 	resp := struct {
-		ID        string `json:"id"`
-		BoardID   string `json:"board_id"`
-		AuthorID  string `json:"author_id"`
-		Title     string `json:"title"`
-		Content   string `json:"content"`
-		CreatedAt string `json:"created_at"`
+		ID          string           `json:"id"`
+		BoardID     string           `json:"board_id"`
+		AuthorID    string           `json:"author_id"`
+		Title       string           `json:"title"`
+		Content     string           `json:"content"`
+		ContentJSON json.RawMessage  `json:"content_json,omitempty"`
+		Tags        []string         `json:"tags"`
+		Attachments []attachmentItem `json:"attachments"`
+		CreatedAt   string           `json:"created_at"`
 	}{
-		ID:        post.ID,
-		BoardID:   post.BoardID,
-		AuthorID:  post.AuthorID,
-		Title:     post.Title,
-		Content:   post.Content,
-		CreatedAt: post.CreatedAt,
+		ID:          post.ID,
+		BoardID:     post.BoardID,
+		AuthorID:    post.AuthorID,
+		Title:       post.Title,
+		Content:     post.Content,
+		ContentJSON: safeJSON(post.ContentJSON),
+		Tags:        post.Tags,
+		Attachments: h.attachmentsFromIDs(post.Attachments),
+		CreatedAt:   post.CreatedAt,
 	}
 
 	transport.WriteJSON(w, http.StatusOK, resp)
@@ -261,10 +292,13 @@ func (h *Handler) listComments(w http.ResponseWriter, r *http.Request, postID st
 				ID:       author.ID,
 				Nickname: author.Nickname,
 			},
-			Content:   comment.Content,
-			CreatedAt: comment.CreatedAt,
-			Score:     score,
-			MyVote:    myVote,
+			Content:     comment.Content,
+			ContentJSON: safeJSON(comment.ContentJSON),
+			Tags:        comment.Tags,
+			Attachments: h.attachmentsFromIDs(comment.Attachments),
+			CreatedAt:   comment.CreatedAt,
+			Score:       score,
+			MyVote:      myVote,
 		})
 	}
 
@@ -286,15 +320,14 @@ func (h *Handler) createComment(w http.ResponseWriter, r *http.Request, postID s
 	}
 
 	var req struct {
-		Content  string `json:"content"`
-		ParentID string `json:"parent_id"`
+		Content     string          `json:"content"`
+		ContentJSON json.RawMessage `json:"content_json"`
+		ParentID    string          `json:"parent_id"`
+		Tags        []string        `json:"tags"`
+		Attachments []string        `json:"attachments"`
 	}
 	if err := transport.ReadJSON(r, &req); err != nil {
 		transport.WriteError(w, http.StatusBadRequest, 2001, "invalid json")
-		return
-	}
-	if req.Content == "" {
-		transport.WriteError(w, http.StatusBadRequest, 2001, "missing content")
 		return
 	}
 	parentIDValue := strings.TrimSpace(req.ParentID)
@@ -305,30 +338,54 @@ func (h *Handler) createComment(w http.ResponseWriter, r *http.Request, postID s
 		}
 	}
 
-	comment := h.Store.CreateComment(postID, user.ID, req.Content, parentIDValue)
+	contentJSON := strings.TrimSpace(string(req.ContentJSON))
+	attachments := normalizeAttachmentIDs(req.Attachments)
+	if len(attachments) > maxCommentAttachments {
+		transport.WriteError(w, http.StatusBadRequest, 2001, "too many attachments")
+		return
+	}
+	for _, fileID := range attachments {
+		if _, ok := h.Store.GetFile(fileID); !ok {
+			transport.WriteError(w, http.StatusBadRequest, 2001, "invalid attachment_id")
+			return
+		}
+	}
+	if strings.TrimSpace(req.Content) == "" && contentJSON == "" && len(attachments) == 0 {
+		transport.WriteError(w, http.StatusBadRequest, 2001, "missing content")
+		return
+	}
+
+	tags := normalizeTags(req.Tags, maxCommentTags)
+	comment := h.Store.CreateComment(postID, user.ID, req.Content, contentJSON, parentIDValue, tags, attachments)
 	var parentID *string
 	if strings.TrimSpace(comment.ParentID) != "" {
 		value := comment.ParentID
 		parentID = &value
 	}
 	resp := struct {
-		ID        string  `json:"id"`
-		PostID    string  `json:"post_id"`
-		ParentID  *string `json:"parent_id"`
-		AuthorID  string  `json:"author_id"`
-		Content   string  `json:"content"`
-		CreatedAt string  `json:"created_at"`
-		Score     int     `json:"score"`
-		MyVote    int     `json:"my_vote"`
+		ID          string           `json:"id"`
+		PostID      string           `json:"post_id"`
+		ParentID    *string          `json:"parent_id"`
+		AuthorID    string           `json:"author_id"`
+		Content     string           `json:"content"`
+		ContentJSON json.RawMessage  `json:"content_json,omitempty"`
+		Tags        []string         `json:"tags"`
+		Attachments []attachmentItem `json:"attachments"`
+		CreatedAt   string           `json:"created_at"`
+		Score       int              `json:"score"`
+		MyVote      int              `json:"my_vote"`
 	}{
-		ID:        comment.ID,
-		PostID:    comment.PostID,
-		ParentID:  parentID,
-		AuthorID:  comment.AuthorID,
-		Content:   comment.Content,
-		CreatedAt: comment.CreatedAt,
-		Score:     0,
-		MyVote:    0,
+		ID:          comment.ID,
+		PostID:      comment.PostID,
+		ParentID:    parentID,
+		AuthorID:    comment.AuthorID,
+		Content:     comment.Content,
+		ContentJSON: safeJSON(comment.ContentJSON),
+		Tags:        comment.Tags,
+		Attachments: h.attachmentsFromIDs(comment.Attachments),
+		CreatedAt:   comment.CreatedAt,
+		Score:       0,
+		MyVote:      0,
 	}
 
 	transport.WriteJSON(w, http.StatusOK, resp)
@@ -363,16 +420,19 @@ func (h *Handler) getPost(w http.ResponseWriter, r *http.Request, postID string)
 	}
 
 	resp := struct {
-		ID           string `json:"id"`
-		Board        any    `json:"board"`
-		Author       any    `json:"author"`
-		Title        string `json:"title"`
-		Content      string `json:"content"`
-		Score        int    `json:"score"`
-		MyVote       int    `json:"my_vote"`
-		CommentCount int    `json:"comment_count"`
-		CreatedAt    string `json:"created_at"`
-		DeletedAt    any    `json:"deleted_at"`
+		ID           string           `json:"id"`
+		Board        any              `json:"board"`
+		Author       any              `json:"author"`
+		Title        string           `json:"title"`
+		Content      string           `json:"content"`
+		ContentJSON  json.RawMessage  `json:"content_json,omitempty"`
+		Tags         []string         `json:"tags"`
+		Attachments  []attachmentItem `json:"attachments"`
+		Score        int              `json:"score"`
+		MyVote       int              `json:"my_vote"`
+		CommentCount int              `json:"comment_count"`
+		CreatedAt    string           `json:"created_at"`
+		DeletedAt    any              `json:"deleted_at"`
 	}{
 		ID: post.ID,
 		Board: map[string]any{
@@ -385,6 +445,9 @@ func (h *Handler) getPost(w http.ResponseWriter, r *http.Request, postID string)
 		},
 		Title:        post.Title,
 		Content:      post.Content,
+		ContentJSON:  safeJSON(post.ContentJSON),
+		Tags:         post.Tags,
+		Attachments:  h.attachmentsFromIDs(post.Attachments),
 		Score:        score,
 		MyVote:       myVote,
 		CommentCount: commentCount,
@@ -602,16 +665,32 @@ func clientIP(r *http.Request) string {
 	return ""
 }
 
+const (
+	maxPostAttachments    = 6
+	maxCommentAttachments = 3
+	maxPostTags           = 8
+	maxCommentTags        = 6
+)
+
+type attachmentItem struct {
+	ID       string `json:"id"`
+	Filename string `json:"filename"`
+	URL      string `json:"url"`
+}
+
 type postItem struct {
-	ID           string        `json:"id"`
-	Title        string        `json:"title"`
-	Content      string        `json:"content"`
-	Score        int           `json:"score"`
-	CommentCount int           `json:"comment_count"`
-	MyVote       int           `json:"my_vote"`
-	Author       userSummary   `json:"author"`
-	Board        *boardSummary `json:"board,omitempty"`
-	CreatedAt    string        `json:"created_at"`
+	ID           string           `json:"id"`
+	Title        string           `json:"title"`
+	Content      string           `json:"content"`
+	ContentJSON  json.RawMessage  `json:"content_json,omitempty"`
+	Tags         []string         `json:"tags"`
+	Attachments  []attachmentItem `json:"attachments"`
+	Score        int              `json:"score"`
+	CommentCount int              `json:"comment_count"`
+	MyVote       int              `json:"my_vote"`
+	Author       userSummary      `json:"author"`
+	Board        *boardSummary    `json:"board,omitempty"`
+	CreatedAt    string           `json:"created_at"`
 }
 
 type boardSummary struct {
@@ -620,18 +699,94 @@ type boardSummary struct {
 }
 
 type commentItem struct {
-	ID        string      `json:"id"`
-	ParentID  *string     `json:"parent_id"`
-	Author    userSummary `json:"author"`
-	Content   string      `json:"content"`
-	CreatedAt string      `json:"created_at"`
-	Score     int         `json:"score"`
-	MyVote    int         `json:"my_vote"`
+	ID          string           `json:"id"`
+	ParentID    *string          `json:"parent_id"`
+	Author      userSummary      `json:"author"`
+	Content     string           `json:"content"`
+	ContentJSON json.RawMessage  `json:"content_json,omitempty"`
+	Tags        []string         `json:"tags"`
+	Attachments []attachmentItem `json:"attachments"`
+	CreatedAt   string           `json:"created_at"`
+	Score       int              `json:"score"`
+	MyVote      int              `json:"my_vote"`
 }
 
 type userSummary struct {
 	ID       string `json:"id"`
 	Nickname string `json:"nickname"`
+}
+
+func normalizeAttachmentIDs(ids []string) []string {
+	if len(ids) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(ids))
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		trimmed := strings.TrimSpace(id)
+		if trimmed == "" {
+			continue
+		}
+		if _, ok := seen[trimmed]; ok {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		out = append(out, trimmed)
+	}
+	return out
+}
+
+func normalizeTags(tags []string, limit int) []string {
+	if len(tags) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(tags))
+	out := make([]string, 0, len(tags))
+	for _, tag := range tags {
+		trimmed := strings.TrimSpace(tag)
+		if trimmed == "" {
+			continue
+		}
+		if _, ok := seen[trimmed]; ok {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		out = append(out, trimmed)
+		if limit > 0 && len(out) >= limit {
+			break
+		}
+	}
+	return out
+}
+
+func safeJSON(raw string) json.RawMessage {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return nil
+	}
+	if !json.Valid([]byte(trimmed)) {
+		return nil
+	}
+	return json.RawMessage(trimmed)
+}
+
+func (h *Handler) attachmentsFromIDs(ids []string) []attachmentItem {
+	if len(ids) == 0 {
+		return []attachmentItem{}
+	}
+	out := make([]attachmentItem, 0, len(ids))
+	for _, id := range ids {
+		meta, ok := h.Store.GetFile(id)
+		if !ok {
+			continue
+		}
+		out = append(out, attachmentItem{
+			ID:       meta.ID,
+			Filename: meta.Filename,
+			URL:      "/files/" + meta.ID,
+		})
+	}
+	return out
 }
 
 // parsePositiveInt parses a positive int and falls back when the input is empty or invalid.

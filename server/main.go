@@ -160,6 +160,7 @@ func main() {
 	// -----------------------------
 	// 上传接口：例如接收 multipart/form-data 或其他格式（取决于实现）。
 	mux.HandleFunc("/api/v1/files", fileHandler.Upload)
+	mux.HandleFunc("/api/uploads/images", fileHandler.UploadImage)
 
 	// 下载接口：通过 /files/{file_id} 访问。
 	// 注意这里是前缀匹配，因此需要手动解析 file_id。
