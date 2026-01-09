@@ -181,27 +181,35 @@ WebSocket 通信采用 **统一事件信封格式**，包含版本号与事件�
 - 前端需要先注册再登录（见 `apps/web`）
 - SQLite 数据库新增 `accounts.password_hash` 字段；老数据库里已有账号但没有密码时，允许通过注册补齐密码后继续使用
 
-## DL-008 Web 前端技术栈：Vue 3 + TypeScript + Vite + Naive UI
+## DL-008 Web 前端技术栈：React 19 + TypeScript + Vite
 
-* **状态**：Accepted
-* **日期**：2025-12
+* **状态**：Accepted（已更新）
+* **日期**：2025-12（更新于 2026-01）
 
 ### 决策
 
-- Web 前端统一使用：Vue 3 + TypeScript + Vite + Naive UI
-- `apps/web` 作为前端工程目录（后续会从当前 Demo 页面演进/迁移）
+- Web 前端统一使用：React 19 + TypeScript + Vite
+- 富文本编辑器使用 TipTap（基于 ProseMirror）
+- `apps/web` 作为前端工程目录
 
 ### 原因
 
-- Vue 3 生态成熟，适合快速迭代与长期维护
-- TypeScript 提升可维护性（对新手也更容易在 IDE 里“看懂类型”）
+- React 生态成熟，社区资源丰富
+- TypeScript 提升可维护性
 - Vite 启动/热更新快，开发体验好
-- Naive UI 组件丰富、风格统一，减少重复造 UI 轮子
+- TipTap 富文本编辑器功能强大，扩展性好
 
 ### 影响
 
-- 开发阶段通常使用 Vite Dev Server（可通过代理转发到 Go 后端的 `/api/v1` 与 `/ws`）
-- 生产构建输出会变成静态资源（通常是 `dist/`），可由 Go/Nginx/CDN 提供
+- 开发阶段使用 Vite Dev Server（端口 5173，代理转发到 Go 后端 8080）
+- 生产构建输出为静态资源（`dist/`），可由 Go/Nginx/CDN 提供
+
+### 变更说明
+
+原计划使用 Vue 3 + Naive UI，实际开发中选择了 React，原因：
+
+- 开发者对 React 更熟悉
+- React 19 新特性（如 use hook）更适合项目需求
 
 ---
 

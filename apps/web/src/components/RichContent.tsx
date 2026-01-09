@@ -1,7 +1,11 @@
 import { useCallback, useMemo, useState } from 'react'
-import { EditorContent, useEditor } from '@tiptap/react'
-import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
-import type { EditorView } from '@tiptap/pm/view'
+import {
+  EditorContent,
+  useEditor,
+  NodeViewWrapper,
+  ReactNodeViewRenderer,
+  type NodeViewProps,
+} from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Link from '@tiptap/extension-link'
 import Image from '@tiptap/extension-image'
@@ -28,6 +32,21 @@ const parseContent = (value: unknown) => {
     }
   }
   return value
+}
+
+const ImageNodeView = ({ node }: NodeViewProps) => {
+  const src = node.attrs.src as string
+  const alt = (node.attrs.alt as string) || ''
+
+  return (
+    <NodeViewWrapper className="rich-content__image-wrap" data-src={src}>
+      <div
+        className="rich-content__image-bg"
+        style={{ backgroundImage: `url(${src})` }}
+      />
+      <img className="rich-content__image" src={src} alt={alt} draggable={false} />
+    </NodeViewWrapper>
+  )
 }
 
 const RichContent = ({ contentJson, contentText }: RichContentProps) => {
@@ -77,39 +96,31 @@ const RichContent = ({ contentJson, contentText }: RichContentProps) => {
             target: '_blank',
           },
         }),
-        Image.configure({
-          HTMLAttributes: {
-            class: 'rich-content__image',
+        Image.extend({
+          addNodeView() {
+            return ReactNodeViewRenderer(ImageNodeView)
           },
         }),
       ],
       content,
       editable: false,
-      editorProps: {
-        handleClickOn: (
-          _view: EditorView,
-          _pos: number,
-          node: ProseMirrorNode,
-          _nodePos: number,
-          event: MouseEvent,
-        ) => {
-          if (node.type.name !== 'image') {
-            return false
-          }
-          const src = node.attrs?.src as string | undefined
-          if (!src) {
-            return false
-          }
-          const handled = handleOpen(src)
-          if (handled) {
-            event.preventDefault()
-            event.stopPropagation()
-          }
-          return handled
-        },
-      },
     },
-    [content, handleOpen],
+    [content],
+  )
+
+  const handleContentClick = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      const target = event.target as HTMLElement
+      const wrap = target.closest('.rich-content__image-wrap') as HTMLElement | null
+      if (!wrap) {
+        return
+      }
+      const src = wrap.dataset.src
+      if (src) {
+        handleOpen(src)
+      }
+    },
+    [handleOpen],
   )
 
   if (!editor) {
@@ -117,7 +128,7 @@ const RichContent = ({ contentJson, contentText }: RichContentProps) => {
   }
 
   return (
-    <div className="rich-content">
+    <div className="rich-content" onClick={handleContentClick}>
       <EditorContent editor={editor} />
       <MediaViewer
         items={mediaItems}

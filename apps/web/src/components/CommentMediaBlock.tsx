@@ -122,6 +122,9 @@ const MediaThumb = ({ item, index, layout, overlayCount, onClick }: MediaThumbPr
           </button>
         </div>
       ) : null}
+      {item.type === 'image' ? (
+        <div className="media-thumb__bg" style={{ backgroundImage: `url(${sourceUrl})` }} />
+      ) : null}
       {item.type === 'video' ? (
         <video
           key={sourceUrl}

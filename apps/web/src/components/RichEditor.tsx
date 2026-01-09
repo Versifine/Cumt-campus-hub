@@ -195,26 +195,32 @@ const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(
       if (!editorInstance) {
         return
       }
+      // Find all matching nodes first, then update them
+      const nodesToUpdate: { pos: number; attrs: Record<string, unknown> }[] = []
       editorInstance.state.doc.descendants((node, pos) => {
-        if (node.type.name !== 'image' || node.attrs.uploadId !== uploadId) {
-          return
-        }
-        editorInstance
-          .chain()
-          .focus()
-          .command(({ tr }) => {
-            tr.setNodeMarkup(pos, undefined, {
+        if (node.type.name === 'image' && node.attrs.uploadId === uploadId) {
+          nodesToUpdate.push({
+            pos,
+            attrs: {
               ...node.attrs,
               src: result.url,
               width: result.width ?? null,
               height: result.height ?? null,
               uploading: false,
               error: false,
-            })
-            return true
+            },
           })
-          .run()
+        }
       })
+      if (nodesToUpdate.length === 0) {
+        return
+      }
+      // Apply all updates in a single transaction
+      editorInstance.view.dispatch(
+        nodesToUpdate.reduceRight((tr, { pos, attrs }) => {
+          return tr.setNodeMarkup(pos, undefined, attrs)
+        }, editorInstance.state.tr),
+      )
     }, [])
 
     const setImageError = useCallback((uploadId: string) => {
@@ -456,11 +462,15 @@ const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(
           if (entries.length === 0) {
             return { json: editorInstance.getJSON(), failed: false }
           }
-          const results = await Promise.all(
-            entries.map(([uploadId, file]) => startUpload(uploadId, file)),
-          )
-          const failed = results.some((item) => !item)
-          return { json: editorInstance.getJSON(), failed }
+          // Upload sequentially to avoid race conditions in editor updates
+          let hasFailed = false
+          for (const [uploadId, file] of entries) {
+            const success = await startUpload(uploadId, file)
+            if (!success) {
+              hasFailed = true
+            }
+          }
+          return { json: editorInstance.getJSON(), failed: hasFailed }
         },
       }),
       [editor, startUpload, value.json],

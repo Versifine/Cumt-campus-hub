@@ -23,6 +23,27 @@ type PostDraftPayload = {
   tags: string[]
 }
 
+// Remove image nodes with blob: URLs from TipTap JSON content
+// These URLs are temporary and won't work after page reload
+const sanitizeContentJson = (json: unknown): unknown => {
+  if (!json || typeof json !== 'object') {
+    return json
+  }
+  const node = json as { type?: string; attrs?: { src?: string }; content?: unknown[] }
+  // Remove image nodes with blob URLs
+  if (node.type === 'image' && node.attrs?.src?.startsWith('blob:')) {
+    return null
+  }
+  // Recursively process content array
+  if (Array.isArray(node.content)) {
+    const filtered = node.content
+      .map(sanitizeContentJson)
+      .filter((item): item is object => item !== null)
+    return { ...node, content: filtered }
+  }
+  return json
+}
+
 const Submit = () => {
   const navigate = useNavigate()
   const { user } = useAuth()
@@ -66,7 +87,10 @@ const Submit = () => {
     }
     setTitle(draft.data.title ?? '')
     setBoardId(draft.data.boardId ?? '')
-    setContent(draft.data.content ?? { json: null, text: '' })
+    // Sanitize draft content to remove blob URLs that won't work after reload
+    const draftContent = draft.data.content ?? { json: null, text: '' }
+    const sanitizedJson = sanitizeContentJson(draftContent.json)
+    setContent({ json: sanitizedJson as typeof draftContent.json, text: draftContent.text })
     setTags(draft.data.tags ?? [])
   }, [])
 
@@ -174,6 +198,12 @@ const Submit = () => {
         return
       }
       const resolvedJson = uploadResult?.json ?? content.json
+      // Safety check: ensure no blob URLs are being submitted
+      const jsonStr = JSON.stringify(resolvedJson ?? {})
+      if (jsonStr.includes('blob:')) {
+        setSubmitError('部分图片上传失败，请检查图片并重试')
+        return
+      }
       await createPost({
         board_id: boardId,
         title: title.trim(),

@@ -37,15 +37,23 @@ const appendCacheBuster = (url: string, token: number) => {
   return `${url}${separator}t=${token}`
 }
 
+const MIN_SCALE = 1
+const MAX_SCALE = 4
+
 const MediaViewer = ({ items, open, startIndex = 0, onClose }: MediaViewerProps) => {
   const panelRef = useRef<HTMLDivElement | null>(null)
+  const stageRef = useRef<HTMLDivElement | null>(null)
   const closeButtonRef = useRef<HTMLButtonElement | null>(null)
   const touchStartRef = useRef<{ x: number; y: number } | null>(null)
+  const dragRef = useRef<{ startX: number; startY: number; scrollLeft: number; scrollTop: number } | null>(null)
   const [activeIndex, setActiveIndex] = useState(0)
-  const [zoomed, setZoomed] = useState(false)
+  const [scale, setScale] = useState(1)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
   const [retryToken, setRetryToken] = useState(0)
+  const [isDragging, setIsDragging] = useState(false)
+
+  const zoomed = scale > 1
 
   const total = items.length
   const activeItem = items[activeIndex]
@@ -67,7 +75,7 @@ const MediaViewer = ({ items, open, startIndex = 0, onClose }: MediaViewerProps)
   }, [canNavigate, total])
 
   const handleClose = useCallback(() => {
-    setZoomed(false)
+    setScale(1)
     onClose()
   }, [onClose])
 
@@ -76,7 +84,7 @@ const MediaViewer = ({ items, open, startIndex = 0, onClose }: MediaViewerProps)
       return
     }
     setActiveIndex(clampIndex(startIndex, total))
-    setZoomed(false)
+    setScale(1)
     setLoading(true)
     setError(false)
     setRetryToken(0)
@@ -120,7 +128,7 @@ const MediaViewer = ({ items, open, startIndex = 0, onClose }: MediaViewerProps)
     }
     setLoading(true)
     setError(false)
-    setZoomed(false)
+    setScale(1)
     setRetryToken(0)
   }, [activeIndex, open])
 
@@ -200,8 +208,84 @@ const MediaViewer = ({ items, open, startIndex = 0, onClose }: MediaViewerProps)
     if (activeItem.type !== 'image') {
       return
     }
-    setZoomed((prev) => !prev)
+    // Toggle between 1x and 2x
+    const nextScale = scale === 1 ? 2 : 1
+    setScale(nextScale)
+    // When zooming in, scroll to center of the image
+    if (nextScale > 1) {
+      requestAnimationFrame(() => {
+        const stage = panelRef.current?.querySelector('.media-viewer__stage')
+        if (stage) {
+          const scrollLeft = (stage.scrollWidth - stage.clientWidth) / 2
+          const scrollTop = (stage.scrollHeight - stage.clientHeight) / 2
+          stage.scrollTo({ left: scrollLeft, top: scrollTop })
+        }
+      })
+    }
   }
+
+  const handleWheel = useCallback(
+    (event: WheelEvent) => {
+      if (activeItem?.type !== 'image') {
+        return
+      }
+      // Prevent page scroll
+      event.preventDefault()
+      const delta = event.deltaY > 0 ? -0.2 : 0.2
+      setScale((prev) => Math.min(MAX_SCALE, Math.max(MIN_SCALE, prev + delta)))
+    },
+    [activeItem?.type],
+  )
+
+  // Mouse drag handlers for panning
+  const handleMouseDown = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      if (!zoomed || !stageRef.current) {
+        return
+      }
+      event.preventDefault()
+      setIsDragging(true)
+      dragRef.current = {
+        startX: event.clientX,
+        startY: event.clientY,
+        scrollLeft: stageRef.current.scrollLeft,
+        scrollTop: stageRef.current.scrollTop,
+      }
+    },
+    [zoomed],
+  )
+
+  const handleMouseMove = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      if (!isDragging || !dragRef.current || !stageRef.current) {
+        return
+      }
+      const dx = event.clientX - dragRef.current.startX
+      const dy = event.clientY - dragRef.current.startY
+      stageRef.current.scrollLeft = dragRef.current.scrollLeft - dx
+      stageRef.current.scrollTop = dragRef.current.scrollTop - dy
+    },
+    [isDragging],
+  )
+
+  const handleMouseUp = useCallback(() => {
+    setIsDragging(false)
+    dragRef.current = null
+  }, [])
+
+  useEffect(() => {
+    if (!open) {
+      return
+    }
+    const stage = stageRef.current
+    if (!stage) {
+      return
+    }
+    stage.addEventListener('wheel', handleWheel as EventListener, { passive: false })
+    return () => {
+      stage.removeEventListener('wheel', handleWheel as EventListener)
+    }
+  }, [open, handleWheel])
 
   const sourceUrl = useMemo(
     () => appendCacheBuster(activeItem?.url ?? '', retryToken),
@@ -213,7 +297,13 @@ const MediaViewer = ({ items, open, startIndex = 0, onClose }: MediaViewerProps)
   }
 
   return (
-    <div className="media-viewer" role="dialog" aria-modal="true" aria-label="媒体查看">
+    <div
+      className="media-viewer"
+      role="dialog"
+      aria-modal="true"
+      aria-label="媒体查看"
+      onClick={(e) => e.stopPropagation()}
+    >
       <div className="media-viewer__backdrop" onClick={handleClose} />
       <div className="media-viewer__panel" ref={panelRef} onKeyDown={handlePanelKeyDown}>
         <header className="media-viewer__header">
@@ -253,10 +343,19 @@ const MediaViewer = ({ items, open, startIndex = 0, onClose }: MediaViewerProps)
             </button>
           ) : null}
           <div
-            className={
-              zoomed ? 'media-viewer__stage media-viewer__stage--zoomed' : 'media-viewer__stage'
-            }
+            ref={stageRef}
+            className={[
+              'media-viewer__stage',
+              zoomed && 'media-viewer__stage--zoomed',
+              isDragging && 'media-viewer__stage--dragging',
+            ]
+              .filter(Boolean)
+              .join(' ')}
             onDoubleClick={handleToggleZoom}
+            onMouseDown={handleMouseDown}
+            onMouseMove={handleMouseMove}
+            onMouseUp={handleMouseUp}
+            onMouseLeave={handleMouseUp}
           >
             {!error && loading ? <div className="media-viewer__loading" /> : null}
             {error ? (
@@ -286,10 +385,25 @@ const MediaViewer = ({ items, open, startIndex = 0, onClose }: MediaViewerProps)
                 className="media-viewer__media"
                 src={sourceUrl}
                 alt={activeItem.alt ?? 'media'}
-                onLoad={() => setLoading(false)}
+                style={{ transform: `scale(${scale})` }}
+                draggable={false}
+                onLoad={(e) => {
+                  setLoading(false)
+                  // Force re-render for cached images
+                  const img = e.currentTarget
+                  if (img.complete && img.naturalWidth > 0) {
+                    setLoading(false)
+                  }
+                }}
                 onError={() => {
                   setLoading(false)
                   setError(true)
+                }}
+                ref={(img) => {
+                  // Handle already-cached images
+                  if (img?.complete && img.naturalWidth > 0) {
+                    setLoading(false)
+                  }
                 }}
               />
             )}
@@ -306,7 +420,9 @@ const MediaViewer = ({ items, open, startIndex = 0, onClose }: MediaViewerProps)
           ) : null}
         </div>
         <div className="media-viewer__hint">
-          支持键盘方向键切换，双击图片放大，Esc 关闭
+          {zoomed
+            ? `${Math.round(scale * 100)}% · 拖动平移，滚轮缩放，双击复位`
+            : '滚轮或双击缩放，方向键切换，Esc 关闭'}
         </div>
       </div>
     </div>

@@ -199,7 +199,8 @@ export const normalizeCommentMedia = (comment: {
   const seen = new Set<string>()
   const out: MediaItem[] = []
   for (const item of candidates) {
-    if (!item.url || seen.has(item.url)) {
+    // Skip invalid URLs (blob: URLs are temporary and won't work after page reload)
+    if (!item.url || seen.has(item.url) || item.url.startsWith('blob:')) {
       continue
     }
     seen.add(item.url)
@@ -214,21 +215,40 @@ export const normalizeMediaFromAttachments = (
   return normalizeCommentMedia({ attachments })
 }
 
+const isValidMediaUrl = (url: string) => {
+  // Filter out blob URLs that are temporary/local
+  if (url.startsWith('blob:')) {
+    return false
+  }
+  // Allow data URLs (base64 images) as they are self-contained
+  if (url.startsWith('data:')) {
+    return true
+  }
+  // Allow relative and absolute URLs
+  return true
+}
+
 export const extractMediaFromContent = (contentJson: unknown) => {
   const jsonDoc = parseContentJSON(contentJson)
   if (!jsonDoc) {
     return [] as MediaItem[]
   }
+  let items: MediaItem[]
   if (typeof jsonDoc === 'string') {
     const htmlItems = extractMediaFromHTML(jsonDoc)
     if (htmlItems.length > 0) {
-      return htmlItems
+      items = htmlItems
+    } else {
+      items = extractMediaFromMarkdown(jsonDoc)
     }
-    return extractMediaFromMarkdown(jsonDoc)
+  } else {
+    const deltaItems = extractMediaFromDelta(jsonDoc)
+    if (deltaItems.length > 0) {
+      items = deltaItems
+    } else {
+      items = extractMediaFromJSON(jsonDoc)
+    }
   }
-  const deltaItems = extractMediaFromDelta(jsonDoc)
-  if (deltaItems.length > 0) {
-    return deltaItems
-  }
-  return extractMediaFromJSON(jsonDoc)
+  // Filter out invalid URLs (e.g., blob: URLs from failed uploads)
+  return items.filter((item) => isValidMediaUrl(item.url))
 }

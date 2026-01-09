@@ -7,6 +7,7 @@ import { useAuth } from '../context/AuthContext'
 import { formatRelativeTimeUTC8 } from '../utils/time'
 import { extractMediaFromContent, type MediaItem } from '../utils/media'
 import InlineAvatar from './InlineAvatar'
+import MediaViewer from './MediaViewer'
 
 type PostCardProps = {
   post: PostItem
@@ -95,11 +96,25 @@ const PostCard = ({ post }: PostCardProps) => {
     ? Math.max(inlineMedia.length - 1, 0)
     : Math.max(attachments.length - 1, 0)
 
+  // Build media list for viewer
+  const mediaItems: MediaItem[] = primaryInline
+    ? inlineMedia
+    : attachments
+        .map((att) => {
+          const kind = getAttachmentKind(att)
+          if (kind === 'file') return null
+          return { type: kind, url: att.url, alt: att.filename } as MediaItem
+        })
+        .filter((item): item is MediaItem => item !== null)
+
   const [vote, setVote] = useState<VoteState>(baseVote)
   const [score, setScore] = useState(baseScore)
   const [shareLabel, setShareLabel] = useState('分享')
   const [pending, setPending] = useState(false)
   const [hint, setHint] = useState<string | null>(null)
+  const [viewerOpen, setViewerOpen] = useState(false)
+  const [viewerIndex, setViewerIndex] = useState(0)
+  const [previewIndex, setPreviewIndex] = useState(0)
 
   useEffect(() => {
     setVote(baseVote)
@@ -189,6 +204,24 @@ const PostCard = ({ post }: PostCardProps) => {
     }
   }
 
+  const handleMediaClick = (event: MouseEvent<HTMLDivElement>) => {
+    stopCardNavigation(event)
+    if (mediaItems.length > 0) {
+      setViewerIndex(previewIndex)
+      setViewerOpen(true)
+    }
+  }
+
+  const handlePrevMedia = (event: MouseEvent<HTMLButtonElement>) => {
+    stopCardNavigation(event)
+    setPreviewIndex((prev) => (prev - 1 + mediaItems.length) % mediaItems.length)
+  }
+
+  const handleNextMedia = (event: MouseEvent<HTMLButtonElement>) => {
+    stopCardNavigation(event)
+    setPreviewIndex((prev) => (prev + 1) % mediaItems.length)
+  }
+
   const renderAttachmentPreview = (attachment: AttachmentItem) => {
     const kind = getAttachmentKind(attachment)
     if (kind === 'image') {
@@ -252,18 +285,48 @@ const PostCard = ({ post }: PostCardProps) => {
           {boardName ? <span className="post-card__badge">{boardName}</span> : null}
         </div>
         {content ? <p className="post-card__content">{content}</p> : null}
-        {primaryInline ? (
-          <div className="post-card__media" onClick={stopCardPropagation}>
-            {renderInlinePreview(primaryInline)}
-            {extraCount > 0 ? (
-              <span className="post-card__media-count">+{extraCount}</span>
-            ) : null}
-          </div>
-        ) : primaryAttachment ? (
-          <div className="post-card__media" onClick={stopCardPropagation}>
-            {renderAttachmentPreview(primaryAttachment)}
-            {extraCount > 0 ? (
-              <span className="post-card__media-count">+{extraCount}</span>
+        {mediaItems.length > 0 ? (
+          <div className="post-card__media-carousel">
+            <div className="post-card__media" onClick={handleMediaClick}>
+              {mediaItems[previewIndex].type === 'image' ? (
+                <div
+                  className="post-card__media-bg"
+                  style={{ backgroundImage: `url(${mediaItems[previewIndex].url})` }}
+                />
+              ) : null}
+              {renderInlinePreview(mediaItems[previewIndex])}
+            </div>
+            {mediaItems.length > 1 ? (
+              <>
+                <button
+                  type="button"
+                  className="post-card__carousel-btn post-card__carousel-btn--prev"
+                  onClick={handlePrevMedia}
+                  aria-label="上一张"
+                >
+                  {'<'}
+                </button>
+                <button
+                  type="button"
+                  className="post-card__carousel-btn post-card__carousel-btn--next"
+                  onClick={handleNextMedia}
+                  aria-label="下一张"
+                >
+                  {'>'}
+                </button>
+                <div className="post-card__carousel-dots">
+                  {mediaItems.map((_, i) => (
+                    <span
+                      key={i}
+                      className={
+                        i === previewIndex
+                          ? 'post-card__carousel-dot is-active'
+                          : 'post-card__carousel-dot'
+                      }
+                    />
+                  ))}
+                </div>
+              </>
             ) : null}
           </div>
         ) : null}
@@ -301,6 +364,12 @@ const PostCard = ({ post }: PostCardProps) => {
         </div>
         {hint ? <div className="post-card__hint">{hint}</div> : null}
       </div>
+      <MediaViewer
+        items={mediaItems}
+        open={viewerOpen}
+        startIndex={viewerIndex}
+        onClose={() => setViewerOpen(false)}
+      />
     </article>
   )
 }
