@@ -189,6 +189,18 @@ func (s *SQLiteStore) migrate() error {
 		}
 	}
 
+	// Backward compatible migration for files table: add width and height columns.
+	if _, err := s.db.Exec(`ALTER TABLE files ADD COLUMN width INTEGER NOT NULL DEFAULT 0;`); err != nil {
+		if !isSQLiteDuplicateColumnError(err) {
+			return err
+		}
+	}
+	if _, err := s.db.Exec(`ALTER TABLE files ADD COLUMN height INTEGER NOT NULL DEFAULT 0;`); err != nil {
+		if !isSQLiteDuplicateColumnError(err) {
+			return err
+		}
+	}
+
 	// Legacy databases may contain demo tokens for accounts without passwords.
 	// Drop those tokens so users must register (set a password) before using the API.
 	_, _ = s.db.Exec(
@@ -1044,12 +1056,14 @@ func (s *SQLiteStore) ClearCommentVote(postID, commentID, userID string) (int, i
 func (s *SQLiteStore) SaveFile(uploaderID, filename, storageKey, storagePath string, width, height int) FileMeta {
 	tx, err := s.db.Begin()
 	if err != nil {
+		log.Printf("[SaveFile] failed to begin transaction: %v", err)
 		return FileMeta{}
 	}
 	defer func() { _ = tx.Rollback() }()
 
 	seq, err := s.nextCounter(tx, "file")
 	if err != nil {
+		log.Printf("[SaveFile] failed to get next counter: %v", err)
 		return FileMeta{}
 	}
 
@@ -1077,12 +1091,15 @@ func (s *SQLiteStore) SaveFile(uploaderID, filename, storageKey, storagePath str
 		file.Height,
 		file.CreatedAt,
 	); err != nil {
+		log.Printf("[SaveFile] failed to insert file: %v", err)
 		return FileMeta{}
 	}
 
 	if err := tx.Commit(); err != nil {
+		log.Printf("[SaveFile] failed to commit: %v", err)
 		return FileMeta{}
 	}
+	log.Printf("[SaveFile] saved file: id=%s, path=%s", file.ID, file.StoragePath)
 	return file
 }
 

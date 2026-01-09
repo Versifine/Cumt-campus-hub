@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import {
   EditorContent,
   useEditor,
@@ -39,26 +39,28 @@ const ImageNodeView = ({ node }: NodeViewProps) => {
   const src = node.attrs.src as string
   const alt = (node.attrs.alt as string) || ''
   const [needsBg, setNeedsBg] = useState(false)
-  const wrapRef = useRef<HTMLDivElement>(null)
 
-  const checkNeedsBg = (img: HTMLImageElement) => {
-    const wrap = wrapRef.current
-    if (!wrap || !img.naturalWidth || !img.naturalHeight) {
+  const checkNeedsBg = useCallback((img: HTMLImageElement) => {
+    if (!img.naturalWidth || !img.naturalHeight) {
       return
     }
-    // 检查图片是否能填满容器宽度
+    // 获取父容器宽度
+    const wrap = img.closest('.rich-content__image-wrap') as HTMLElement | null
+    if (!wrap) {
+      return
+    }
     const containerWidth = wrap.clientWidth
     const maxHeight = 512
     const displayHeight = Math.min(img.naturalHeight, maxHeight)
     const displayWidth = (displayHeight / img.naturalHeight) * img.naturalWidth
     // 如果图片显示宽度小于容器宽度的 85%，需要模糊背景
     setNeedsBg(displayWidth < containerWidth * 0.85)
-  }
+  }, [])
 
   return (
     <NodeViewWrapper
       className={`rich-content__image-wrap ${needsBg ? 'needs-bg' : ''}`}
-      ref={wrapRef}
+      data-src={src}
     >
       {needsBg ? (
         <div
