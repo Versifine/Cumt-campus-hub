@@ -676,6 +676,8 @@ type attachmentItem struct {
 	ID       string `json:"id"`
 	Filename string `json:"filename"`
 	URL      string `json:"url"`
+	Width    int    `json:"width,omitempty"`
+	Height   int    `json:"height,omitempty"`
 }
 
 type postItem struct {
@@ -784,6 +786,8 @@ func (h *Handler) attachmentsFromIDs(ids []string) []attachmentItem {
 			ID:       meta.ID,
 			Filename: meta.Filename,
 			URL:      "/files/" + meta.ID,
+			Width:    meta.Width,
+			Height:   meta.Height,
 		})
 	}
 	return out

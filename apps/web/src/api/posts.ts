@@ -9,6 +9,8 @@ export type AttachmentItem = {
   id: string
   filename: string
   url: string
+  width?: number
+  height?: number
 }
 
 export type PostItem = {

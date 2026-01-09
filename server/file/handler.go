@@ -76,16 +76,21 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	meta := h.Store.SaveFile(user.ID, filename, storageKey, storagePath)
+	width, height, _ := readImageSize(storagePath)
+	meta := h.Store.SaveFile(user.ID, filename, storageKey, storagePath, width, height)
 
 	resp := struct {
 		ID       string `json:"id"`
 		Filename string `json:"filename"`
 		URL      string `json:"url"`
+		Width    int    `json:"width,omitempty"`
+		Height   int    `json:"height,omitempty"`
 	}{
 		ID:       meta.ID,
 		Filename: meta.Filename,
 		URL:      "/files/" + meta.ID,
+		Width:    meta.Width,
+		Height:   meta.Height,
 	}
 
 	transport.WriteJSON(w, http.StatusOK, resp)
@@ -151,23 +156,17 @@ func (h *Handler) UploadImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	meta := h.Store.SaveFile(user.ID, filename, storageKey, storagePath)
-	width, height, ok := readImageSize(storagePath)
-	var widthValue *int
-	var heightValue *int
-	if ok {
-		widthValue = &width
-		heightValue = &height
-	}
+	width, height, _ := readImageSize(storagePath)
+	meta := h.Store.SaveFile(user.ID, filename, storageKey, storagePath, width, height)
 
 	resp := struct {
 		URL    string `json:"url"`
-		Width  *int   `json:"width,omitempty"`
-		Height *int   `json:"height,omitempty"`
+		Width  int    `json:"width,omitempty"`
+		Height int    `json:"height,omitempty"`
 	}{
 		URL:    "/files/" + meta.ID,
-		Width:  widthValue,
-		Height: heightValue,
+		Width:  meta.Width,
+		Height: meta.Height,
 	}
 
 	transport.WriteJSON(w, http.StatusOK, resp)

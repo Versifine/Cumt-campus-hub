@@ -218,7 +218,7 @@
         "nickname": "alice"
       },
       "attachments": [
-        { "id": "f_1", "filename": "photo.jpg", "url": "/files/f_1" }
+        { "id": "f_1", "filename": "photo.jpg", "url": "/files/f_1", "width": 1920, "height": 1080 }
       ],
       "created_at": "2025-01-01T00:00:00Z"
     }
@@ -260,7 +260,7 @@
   "title": "string",
   "content": "string",
   "attachments": [
-    { "id": "f_1", "filename": "photo.jpg", "url": "/files/f_1" }
+    { "id": "f_1", "filename": "photo.jpg", "url": "/files/f_1", "width": 1920, "height": 1080 }
   ],
   "created_at": "2025-01-01T00:00:00Z",
   "score": 0,
@@ -289,7 +289,7 @@
   "title": "string",
   "content": "string",
   "attachments": [
-    { "id": "f_1", "filename": "photo.jpg", "url": "/files/f_1" }
+    { "id": "f_1", "filename": "photo.jpg", "url": "/files/f_1", "width": 1920, "height": 1080 }
   ],
   "created_at": "2025-01-01T00:00:00Z",
   "deleted_at": null
@@ -336,7 +336,7 @@
     "author": { "id": "u_123", "nickname": "alice" },
     "content": "string",
     "attachments": [
-      { "id": "f_1", "filename": "photo.jpg", "url": "/files/f_1" }
+      { "id": "f_1", "filename": "photo.jpg", "url": "/files/f_1", "width": 1920, "height": 1080 }
     ],
     "created_at": "2025-01-01T00:00:00Z",
     "score": 0,
@@ -379,7 +379,7 @@
   "author_id": "u_123",
   "content": "string",
   "attachments": [
-    { "id": "f_1", "filename": "photo.jpg", "url": "/files/f_1" }
+    { "id": "f_1", "filename": "photo.jpg", "url": "/files/f_1", "width": 1920, "height": 1080 }
   ],
   "created_at": "2025-01-01T00:00:00Z"
 }
@@ -463,6 +463,7 @@
 
 - 仅支持图片/视频附件（前端会做限制）
 - 单文件最大 100MB
+- 图片文件会自动读取宽高信息用于前端布局优化
 
 响应：
 
@@ -470,9 +471,16 @@
 {
   "id": "f_123",
   "filename": "example.pdf",
-  "url": "/files/f_123"
+  "url": "/files/f_123",
+  "width": 1920,
+  "height": 1080
 }
 ```
+
+说明：
+
+- `width` 和 `height` 仅对图片文件返回非零值
+- 前端使用这些值进行 `aspect-ratio` 预占位，防止布局抖动 (CLS)
 
 ---
 

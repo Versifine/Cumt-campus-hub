@@ -581,6 +581,7 @@ const PostPlaceholder = () => {
           <RichContent
             contentJson={comment.content_json}
             contentText={comment.content}
+            variant="comment"
           />
           <CommentMediaBlock media={commentMedia} variant="comment" />
           <div className="comment-actions">

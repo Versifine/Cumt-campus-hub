@@ -357,6 +357,10 @@ const MediaViewer = ({ items, open, startIndex = 0, onClose }: MediaViewerProps)
             onMouseUp={handleMouseUp}
             onMouseLeave={handleMouseUp}
           >
+            <div
+              className="media-viewer__stage-bg"
+              style={{ backgroundImage: `url(${activeItem.url})` }}
+            />
             {!error && loading ? <div className="media-viewer__loading" /> : null}
             {error ? (
               <div className="media-viewer__error">

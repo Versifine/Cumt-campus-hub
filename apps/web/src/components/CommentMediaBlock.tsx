@@ -1,4 +1,4 @@
-import { useMemo, useState, type MouseEvent } from 'react'
+import { useMemo, useRef, useState, type MouseEvent } from 'react'
 import type { MediaItem } from '../utils/media'
 import MediaViewer from './MediaViewer'
 
@@ -83,6 +83,7 @@ const MediaThumb = ({ item, index, layout, overlayCount, onClick }: MediaThumbPr
   const [loaded, setLoaded] = useState(false)
   const [error, setError] = useState(false)
   const [retryToken, setRetryToken] = useState(0)
+  const thumbRef = useRef<HTMLButtonElement>(null)
 
   const handleRetry = (event: MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation()
@@ -109,6 +110,7 @@ const MediaThumb = ({ item, index, layout, overlayCount, onClick }: MediaThumbPr
   return (
     <button
       type="button"
+      ref={thumbRef}
       className={className}
       onClick={() => onClick(index)}
       aria-label={item.alt ? `查看 ${item.alt}` : '查看媒体'}
@@ -121,9 +123,6 @@ const MediaThumb = ({ item, index, layout, overlayCount, onClick }: MediaThumbPr
             重试
           </button>
         </div>
-      ) : null}
-      {item.type === 'image' ? (
-        <div className="media-thumb__bg" style={{ backgroundImage: `url(${sourceUrl})` }} />
       ) : null}
       {item.type === 'video' ? (
         <video

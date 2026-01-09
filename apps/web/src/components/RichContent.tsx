@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import {
   EditorContent,
   useEditor,
@@ -18,6 +18,7 @@ import MediaViewer from './MediaViewer'
 type RichContentProps = {
   contentJson?: unknown
   contentText?: string
+  variant?: 'post' | 'comment'
 }
 
 const parseContent = (value: unknown) => {
@@ -37,19 +38,46 @@ const parseContent = (value: unknown) => {
 const ImageNodeView = ({ node }: NodeViewProps) => {
   const src = node.attrs.src as string
   const alt = (node.attrs.alt as string) || ''
+  const [needsBg, setNeedsBg] = useState(false)
+  const wrapRef = useRef<HTMLDivElement>(null)
+
+  const checkNeedsBg = (img: HTMLImageElement) => {
+    const wrap = wrapRef.current
+    if (!wrap || !img.naturalWidth || !img.naturalHeight) {
+      return
+    }
+    // 检查图片是否能填满容器宽度
+    const containerWidth = wrap.clientWidth
+    const maxHeight = 512
+    const displayHeight = Math.min(img.naturalHeight, maxHeight)
+    const displayWidth = (displayHeight / img.naturalHeight) * img.naturalWidth
+    // 如果图片显示宽度小于容器宽度的 85%，需要模糊背景
+    setNeedsBg(displayWidth < containerWidth * 0.85)
+  }
 
   return (
-    <NodeViewWrapper className="rich-content__image-wrap" data-src={src}>
-      <div
-        className="rich-content__image-bg"
-        style={{ backgroundImage: `url(${src})` }}
+    <NodeViewWrapper
+      className={`rich-content__image-wrap ${needsBg ? 'needs-bg' : ''}`}
+      ref={wrapRef}
+    >
+      {needsBg ? (
+        <div
+          className="rich-content__image-bg"
+          style={{ backgroundImage: `url(${src})` }}
+        />
+      ) : null}
+      <img
+        className="rich-content__image"
+        src={src}
+        alt={alt}
+        draggable={false}
+        onLoad={(e) => checkNeedsBg(e.currentTarget)}
       />
-      <img className="rich-content__image" src={src} alt={alt} draggable={false} />
     </NodeViewWrapper>
   )
 }
 
-const RichContent = ({ contentJson, contentText }: RichContentProps) => {
+const RichContent = ({ contentJson, contentText, variant = 'post' }: RichContentProps) => {
   const content = useMemo(() => {
     const parsed = parseContent(contentJson)
     if (parsed) {
@@ -128,7 +156,7 @@ const RichContent = ({ contentJson, contentText }: RichContentProps) => {
   }
 
   return (
-    <div className="rich-content" onClick={handleContentClick}>
+    <div className={`rich-content ${variant === 'comment' ? 'rich-content--comment' : ''}`} onClick={handleContentClick}>
       <EditorContent editor={editor} />
       <MediaViewer
         items={mediaItems}

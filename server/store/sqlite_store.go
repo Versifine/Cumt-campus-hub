@@ -143,6 +143,8 @@ func (s *SQLiteStore) migrate() error {
 			filename TEXT NOT NULL,
 			storage_key TEXT NOT NULL,
 			storage_path TEXT NOT NULL,
+			width INTEGER NOT NULL DEFAULT 0,
+			height INTEGER NOT NULL DEFAULT 0,
 			created_at TEXT NOT NULL
 		);`,
 
@@ -1039,7 +1041,7 @@ func (s *SQLiteStore) ClearCommentVote(postID, commentID, userID string) (int, i
 	return score, 0, nil
 }
 
-func (s *SQLiteStore) SaveFile(uploaderID, filename, storageKey, storagePath string) FileMeta {
+func (s *SQLiteStore) SaveFile(uploaderID, filename, storageKey, storagePath string, width, height int) FileMeta {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return FileMeta{}
@@ -1057,18 +1059,22 @@ func (s *SQLiteStore) SaveFile(uploaderID, filename, storageKey, storagePath str
 		Filename:    filename,
 		StorageKey:  storageKey,
 		StoragePath: storagePath,
+		Width:       width,
+		Height:      height,
 		CreatedAt:   nowRFC3339(),
 	}
 
 	if _, err := tx.Exec(
-		`INSERT INTO files(seq, id, uploader_id, filename, storage_key, storage_path, created_at)
-		 VALUES(?, ?, ?, ?, ?, ?, ?);`,
+		`INSERT INTO files(seq, id, uploader_id, filename, storage_key, storage_path, width, height, created_at)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?);`,
 		seq,
 		file.ID,
 		file.UploaderID,
 		file.Filename,
 		file.StorageKey,
 		file.StoragePath,
+		file.Width,
+		file.Height,
 		file.CreatedAt,
 	); err != nil {
 		return FileMeta{}
@@ -1083,11 +1089,11 @@ func (s *SQLiteStore) SaveFile(uploaderID, filename, storageKey, storagePath str
 func (s *SQLiteStore) GetFile(fileID string) (FileMeta, bool) {
 	var file FileMeta
 	err := s.db.QueryRow(
-		`SELECT id, uploader_id, filename, storage_key, storage_path, created_at
+		`SELECT id, uploader_id, filename, storage_key, storage_path, width, height, created_at
 		 FROM files
 		 WHERE id = ?;`,
 		fileID,
-	).Scan(&file.ID, &file.UploaderID, &file.Filename, &file.StorageKey, &file.StoragePath, &file.CreatedAt)
+	).Scan(&file.ID, &file.UploaderID, &file.Filename, &file.StorageKey, &file.StoragePath, &file.Width, &file.Height, &file.CreatedAt)
 	if err != nil {
 		return FileMeta{}, false
 	}

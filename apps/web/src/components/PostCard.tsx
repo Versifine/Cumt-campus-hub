@@ -1,4 +1,4 @@
-﻿import { useEffect, useState, type KeyboardEvent, type MouseEvent } from 'react'
+﻿import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { AttachmentItem, PostItem } from '../api/posts'
 import { clearVote, votePost } from '../api/posts'
@@ -61,11 +61,62 @@ const getCommentCount = (post: PostItem) => {
   return typeof count === 'number' ? count : 0
 }
 
-const renderInlinePreview = (item: MediaItem) => {
+// 智能模糊背景图片组件
+type SmartMediaProps = {
+  item: MediaItem
+  onClick?: () => void
+}
+
+const SmartMedia = ({ item, onClick }: SmartMediaProps) => {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [needsBg, setNeedsBg] = useState(false)
+  const [loaded, setLoaded] = useState(false)
+
+  const checkNeedsBg = useCallback((img: HTMLImageElement) => {
+    const container = containerRef.current
+    if (!container || !img.naturalWidth || !img.naturalHeight) {
+      return
+    }
+    // 计算图片在 max-height 限制下的显示宽度
+    const containerWidth = container.clientWidth
+    const maxHeight = 512
+    const displayHeight = Math.min(img.naturalHeight, maxHeight)
+    const displayWidth = (displayHeight / img.naturalHeight) * img.naturalWidth
+    // 如果图片显示宽度小于容器宽度的 85%，需要模糊背景
+    setNeedsBg(displayWidth < containerWidth * 0.85)
+  }, [])
+
   if (item.type === 'video') {
-    return <video src={item.url} controls preload="metadata" />
+    return (
+      <div className="post-card__media-inner" ref={containerRef}>
+        <video src={item.url} controls preload="metadata" />
+      </div>
+    )
   }
-  return <img src={item.url} alt={item.alt ?? 'media'} loading="lazy" />
+
+  return (
+    <div
+      className={`post-card__media-inner ${needsBg ? 'needs-bg' : ''}`}
+      ref={containerRef}
+      onClick={onClick}
+    >
+      {needsBg && loaded ? (
+        <div
+          className="post-card__media-bg"
+          style={{ backgroundImage: `url(${item.url})` }}
+        />
+      ) : null}
+      <img
+        src={item.url}
+        alt={item.alt ?? 'media'}
+        loading="lazy"
+        onLoad={(e) => {
+          setLoaded(true)
+          checkNeedsBg(e.currentTarget)
+        }}
+      />
+    </div>
+  )
 }
 
 const normalizeVote = (value: number | undefined): VoteState => {
@@ -91,10 +142,6 @@ const PostCard = ({ post }: PostCardProps) => {
   const inlineMedia = extractMediaFromContent(post.content_json)
   const primaryInline = inlineMedia[0]
   const attachments = post.attachments ?? []
-  const primaryAttachment = primaryInline ? null : attachments[0]
-  const extraCount = primaryInline
-    ? Math.max(inlineMedia.length - 1, 0)
-    : Math.max(attachments.length - 1, 0)
 
   // Build media list for viewer
   const mediaItems: MediaItem[] = primaryInline
@@ -103,7 +150,13 @@ const PostCard = ({ post }: PostCardProps) => {
         .map((att) => {
           const kind = getAttachmentKind(att)
           if (kind === 'file') return null
-          return { type: kind, url: att.url, alt: att.filename } as MediaItem
+          return {
+            type: kind,
+            url: att.url,
+            alt: att.filename,
+            width: att.width,
+            height: att.height,
+          } as MediaItem
         })
         .filter((item): item is MediaItem => item !== null)
 
@@ -222,24 +275,6 @@ const PostCard = ({ post }: PostCardProps) => {
     setPreviewIndex((prev) => (prev + 1) % mediaItems.length)
   }
 
-  const renderAttachmentPreview = (attachment: AttachmentItem) => {
-    const kind = getAttachmentKind(attachment)
-    if (kind === 'image') {
-      return <img src={attachment.url} alt={attachment.filename} loading="lazy" />
-    }
-    if (kind === 'video') {
-      return <video src={attachment.url} controls preload="metadata" />
-    }
-    return (
-      <div className="post-card__media-file">
-        <span className="post-card__media-icon" aria-hidden="true">
-          FILE
-        </span>
-        <span className="post-card__media-name">{attachment.filename}</span>
-      </div>
-    )
-  }
-
   return (
     <article
       className="post-card"
@@ -287,14 +322,8 @@ const PostCard = ({ post }: PostCardProps) => {
         {content ? <p className="post-card__content">{content}</p> : null}
         {mediaItems.length > 0 ? (
           <div className="post-card__media-carousel">
-            <div className="post-card__media" onClick={handleMediaClick}>
-              {mediaItems[previewIndex].type === 'image' ? (
-                <div
-                  className="post-card__media-bg"
-                  style={{ backgroundImage: `url(${mediaItems[previewIndex].url})` }}
-                />
-              ) : null}
-              {renderInlinePreview(mediaItems[previewIndex])}
+            <div className="post-card__media">
+              <SmartMedia item={mediaItems[previewIndex]} onClick={handleMediaClick} />
             </div>
             {mediaItems.length > 1 ? (
               <>
@@ -314,17 +343,8 @@ const PostCard = ({ post }: PostCardProps) => {
                 >
                   {'>'}
                 </button>
-                <div className="post-card__carousel-dots">
-                  {mediaItems.map((_, i) => (
-                    <span
-                      key={i}
-                      className={
-                        i === previewIndex
-                          ? 'post-card__carousel-dot is-active'
-                          : 'post-card__carousel-dot'
-                      }
-                    />
-                  ))}
+                <div className="post-card__carousel-indicator">
+                  {previewIndex + 1} / {mediaItems.length}
                 </div>
               </>
             ) : null}

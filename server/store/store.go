@@ -47,7 +47,7 @@ type API interface {
 	VoteComment(postID, commentID, userID string, value int) (int, int, error)
 	ClearCommentVote(postID, commentID, userID string) (int, int, error)
 
-	SaveFile(uploaderID, filename, storageKey, storagePath string) FileMeta
+	SaveFile(uploaderID, filename, storageKey, storagePath string, width, height int) FileMeta
 	GetFile(fileID string) (FileMeta, bool)
 
 	AddMessage(roomID, senderID, content string) ChatMessage
@@ -109,6 +109,8 @@ type FileMeta struct {
 	Filename    string
 	StorageKey  string
 	StoragePath string
+	Width       int
+	Height      int
 	CreatedAt   string
 }
 
@@ -570,7 +572,7 @@ func (s *Store) ClearCommentVote(postID, commentID, userID string) (int, int, er
 }
 
 // SaveFile stores file metadata and returns it.
-func (s *Store) SaveFile(uploaderID, filename, storageKey, storagePath string) FileMeta {
+func (s *Store) SaveFile(uploaderID, filename, storageKey, storagePath string, width, height int) FileMeta {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -581,6 +583,8 @@ func (s *Store) SaveFile(uploaderID, filename, storageKey, storagePath string) F
 		Filename:    filename,
 		StorageKey:  storageKey,
 		StoragePath: storagePath,
+		Width:       width,
+		Height:      height,
 		CreatedAt:   now(),
 	}
 	s.files[file.ID] = file
