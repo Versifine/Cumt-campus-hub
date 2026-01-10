@@ -68,5 +68,13 @@ data/
 tmp/
 .cache/
 
+# ===== 数据库 =====
+*.sqlite
+*.db
+*.mdb
+*.logdb
+*.sql
+server/storage/
+
 # ===== 其他 =====
 AGENTS.md

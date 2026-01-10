@@ -22,6 +22,7 @@
 * JSON 字段使用 `snake_case`
 * 资源 ID 建议保留前缀（例如 `u_1`、`b_1`、`p_1`、`c_1`、`f_1`、`r_1`）
 * 时间统一使用 ISO 8601（RFC3339），例如 `2025-01-01T00:00:00Z`
+* ????????? UTC+8?????????
 * 使用 HTTP 状态码 + 统一错误结构
 * 认证方式：Bearer Token
 
@@ -145,6 +146,32 @@
 
 ---
 
+### 4.2 获取公开资料（已实现）
+
+`GET /api/v1/users/{id}`
+
+响应：
+
+```json
+{
+  "id": "u_123",
+  "nickname": "alice",
+  "avatar": "",
+  "cover": "",
+  "bio": "",
+  "created_at": "2025-01-01T00:00:00Z",
+  "posts_count": 3,
+  "comments_count": 8
+}
+```
+
+说明：
+
+- `avatar/cover/bio` 当前为空字符串，后续可能演进为真实字段
+- `posts_count/comments_count` 统计非删除数据
+
+---
+
 ## 5. 版块 Board
 
 ### 5.1 获取版块列表（已实现）
@@ -174,6 +201,7 @@
 查询参数：
 
 * `board_id`（可选）
+* `author_id`（可选）
 * `page`
 * `page_size`
 
@@ -189,6 +217,9 @@
         "id": "u_123",
         "nickname": "alice"
       },
+      "attachments": [
+        { "id": "f_1", "filename": "photo.jpg", "url": "/files/f_1", "width": 1920, "height": 1080 }
+      ],
       "created_at": "2025-01-01T00:00:00Z"
     }
   ],
@@ -208,13 +239,16 @@
 {
   "board_id": "b_1",
   "title": "string",
-  "content": "string"
+  "content": "string",
+  "attachments": ["f_1", "f_2"]
 }
 ```
 
 说明：
 
 - `board_id` 必须是存在的版块，否则返回 `400` + `{ "code": 2001, "message": "invalid board_id" }`。
+- `attachments` 可选，元素为 `/api/v1/files` 返回的文件 ID，最多 6 个。
+- `content` 为空时需至少上传 1 个附件。
 
 响应（示例）：
 
@@ -225,6 +259,9 @@
   "author_id": "u_123",
   "title": "string",
   "content": "string",
+  "attachments": [
+    { "id": "f_1", "filename": "photo.jpg", "url": "/files/f_1", "width": 1920, "height": 1080 }
+  ],
   "created_at": "2025-01-01T00:00:00Z",
   "score": 0,
   "my_vote": 0
@@ -251,6 +288,9 @@
   "author": { "id": "u_123", "nickname": "alice" },
   "title": "string",
   "content": "string",
+  "attachments": [
+    { "id": "f_1", "filename": "photo.jpg", "url": "/files/f_1", "width": 1920, "height": 1080 }
+  ],
   "created_at": "2025-01-01T00:00:00Z",
   "deleted_at": null
 }
@@ -295,6 +335,9 @@
     "parent_id": null,
     "author": { "id": "u_123", "nickname": "alice" },
     "content": "string",
+    "attachments": [
+      { "id": "f_1", "filename": "photo.jpg", "url": "/files/f_1", "width": 1920, "height": 1080 }
+    ],
     "created_at": "2025-01-01T00:00:00Z",
     "score": 0,
     "my_vote": 0
@@ -313,13 +356,16 @@
 - 若 `post_id` 不存在（或帖子已软删），返回 `404 not found`。
 - `parent_id` 空表示一级评论，非空表示回复某条评论。
 - parent_id 不存在时返回 400 + { "code": 2001, "message": "invalid parent_id" }
+- `attachments` 可选，元素为 `/api/v1/files` 返回的文件 ID，最多 3 个。
+- `content` 为空时需至少上传 1 个附件。
 
 请求：
 
 ```json
 {
   "content": "string",
-  "parent_id": "c_0"
+  "parent_id": "c_0",
+  "attachments": ["f_1"]
 }
 ```
 
@@ -332,6 +378,9 @@
   "parent_id": "c_0",
   "author_id": "u_123",
   "content": "string",
+  "attachments": [
+    { "id": "f_1", "filename": "photo.jpg", "url": "/files/f_1", "width": 1920, "height": 1080 }
+  ],
   "created_at": "2025-01-01T00:00:00Z"
 }
 ```
@@ -357,40 +406,46 @@
 - `404`：帖子/评论不存在或已删除（`code=2001`）
 
 ---
-
-
-### 7.4 ???????/???????
+### 7.4 对评论投票 / 取消投票（已实现）
 
 `POST /api/v1/posts/{post_id}/comments/{comment_id}/votes`
 
-??????Bearer Token?
+鉴权：需要（Bearer Token）
 
-???
+请求体：
+
 ```json
 { "value": 1 }
 ```
 
-???????
+说明：
+
+* `value` 仅允许 `1`（赞）或 `-1`（踩）
+* 重复投同一方向应返回当前结果或做幂等处理
+
+响应（示例）：
+
 ```json
 { "comment_id": "c_1", "score": 12, "my_vote": 1 }
 ```
 
 `DELETE /api/v1/posts/{post_id}/comments/{comment_id}/votes`
 
-??????Bearer Token?
+鉴权：需要（Bearer Token）
 
-???????
+响应（示例）：
+
 ```json
 { "comment_id": "c_1", "score": 11, "my_vote": 0 }
 ```
 
-?????
-- `400`?value ???`code=2001`?
-- `401`????/Token ???`code=1001`?
-- `404`???/??????????`code=2001`?
+常见错误：
+
+- `400`：value 不合法（`code=2001`）
+- `401`：未登录/Token 无效（`code=1001`）
+- `404`：帖子/评论不存在或已删除（`code=2001`）
 
 ---
-
 ## 8. 文件 File
 
 ### 8.1 上传附件（已实现）
@@ -404,15 +459,28 @@
 * multipart/form-data
 * 字段名：`file`
 
+说明：
+
+- 仅支持图片/视频附件（前端会做限制）
+- 单文件最大 100MB
+- 图片文件会自动读取宽高信息用于前端布局优化
+
 响应：
 
 ```json
 {
   "id": "f_123",
   "filename": "example.pdf",
-  "url": "/files/f_123"
+  "url": "/files/f_123",
+  "width": 1920,
+  "height": 1080
 }
 ```
+
+说明：
+
+- `width` 和 `height` 仅对图片文件返回非零值
+- 前端使用这些值进行 `aspect-ratio` 预占位，防止布局抖动 (CLS)
 
 ---
 
@@ -576,3 +644,73 @@
 ---
 
 > 本 API 文档为 **Demo 阶段 v0.2**，后续修改需同步更新并记录于 `decision-log.md`。
+
+---
+
+## 13. ????????????
+
+### 13.1 ????????
+
+`POST /api/uploads/images`
+
+??????Bearer Token?
+
+???
+- `multipart/form-data`
+- ????`file`
+
+???
+- ??? `image/*`
+- ???? 100MB
+
+???
+
+```json
+{ "url": "/files/f_123", "width": 1024, "height": 768 }
+```
+
+???
+- `url` ????? `content_json` ? image ??? `src`
+
+### 13.2 ??????
+
+`POST /api/v1/posts`
+
+????????/?????
+- `content_json`???? JSON?TipTap?
+- `tags`?`string[]`
+- `content`????????????????/?????
+
+?????
+- ? `content` / `content_json` / `attachments` ???????? `400` + `{ "code": 2001, "message": "invalid content" }`
+
+???
+
+```json
+{
+  "board_id": "b_1",
+  "title": "string",
+  "content": "plain text",
+  "content_json": { "type": "doc", "content": [] },
+  "tags": ["tag1", "tag2"]
+}
+```
+
+### 13.3 ??????
+
+`POST /api/v1/posts/{post_id}/comments`
+
+????????/?????
+- `content_json`???? JSON?TipTap?
+- `tags`?`string[]`
+- `content`??????
+
+???
+
+```json
+{
+  "content": "plain text",
+  "content_json": { "type": "doc", "content": [] },
+  "tags": ["tag1"]
+}
+```

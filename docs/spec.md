@@ -53,6 +53,8 @@
 
 * 注册/登录（账号 + 密码 + token）
 * 用户昵称 / 基础资料
+* 用户主页（Profile v1）：`/u/:id`，展示封面/头像/昵称/签名与发帖列表（评论 Tab 先占位）
+* 关注/粉丝（关注列表、粉丝列表与数量统计）
 * 前端匿名展示（非强匿名）
 
 ### 3.2 社区与帖子
@@ -86,6 +88,11 @@
 
 * id
 * nickname
+* avatar_url（可选）
+* cover_url（可选）
+* bio（可选）
+* following_count（可选）
+* followers_count（可选）
 * created_at
 
 ### 4.2 Board
@@ -101,6 +108,9 @@
 * author_id
 * title
 * content
+* content_json???? JSON????
+* tags?string[]????
+* attachments（图片/视频附件 ID 列表，可选）
 * created_at
 * score（分值，默认 0，后端持久化）
 * comment_count（评论数）
@@ -122,6 +132,9 @@
 * parent_id
 * author_id
 * content
+* content_json???? JSON????
+* tags?string[]????
+* attachments（图片/视频附件 ID 列表，可选）
 * created_at
 * score
 * my_vote
@@ -157,6 +170,8 @@
 * 资源导向（/posts /comments /boards）
 * 统一分页格式
 * 统一错误码
+* 时间展示：24 小时内用相对时间，超过一天用绝对时间（UTC+8）。
+* 时间字段使用 RFC3339（UTC），前端展示统一为 UTC+8。
 
 ### 5.2 WebSocket 协议
 

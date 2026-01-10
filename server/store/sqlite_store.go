@@ -97,6 +97,9 @@ func (s *SQLiteStore) migrate() error {
 			author_id TEXT NOT NULL,
 			title TEXT NOT NULL,
 			content TEXT NOT NULL,
+			content_json TEXT NOT NULL,
+			tags TEXT NOT NULL,
+			attachments TEXT NOT NULL,
 			created_at TEXT NOT NULL,
 			deleted_at TEXT
 		);`,
@@ -108,6 +111,9 @@ func (s *SQLiteStore) migrate() error {
 			parent_id TEXT,
 			author_id TEXT NOT NULL,
 			content TEXT NOT NULL,
+			content_json TEXT NOT NULL,
+			tags TEXT NOT NULL,
+			attachments TEXT NOT NULL,
 			created_at TEXT NOT NULL,
 			deleted_at TEXT
 		);`,
@@ -137,6 +143,8 @@ func (s *SQLiteStore) migrate() error {
 			filename TEXT NOT NULL,
 			storage_key TEXT NOT NULL,
 			storage_path TEXT NOT NULL,
+			width INTEGER NOT NULL DEFAULT 0,
+			height INTEGER NOT NULL DEFAULT 0,
 			created_at TEXT NOT NULL
 		);`,
 
@@ -181,6 +189,18 @@ func (s *SQLiteStore) migrate() error {
 		}
 	}
 
+	// Backward compatible migration for files table: add width and height columns.
+	if _, err := s.db.Exec(`ALTER TABLE files ADD COLUMN width INTEGER NOT NULL DEFAULT 0;`); err != nil {
+		if !isSQLiteDuplicateColumnError(err) {
+			return err
+		}
+	}
+	if _, err := s.db.Exec(`ALTER TABLE files ADD COLUMN height INTEGER NOT NULL DEFAULT 0;`); err != nil {
+		if !isSQLiteDuplicateColumnError(err) {
+			return err
+		}
+	}
+
 	// Legacy databases may contain demo tokens for accounts without passwords.
 	// Drop those tokens so users must register (set a password) before using the API.
 	_, _ = s.db.Exec(
@@ -209,6 +229,36 @@ func (s *SQLiteStore) migrate() error {
 		}
 	}
 	if _, err := s.db.Exec(`ALTER TABLE comments ADD COLUMN parent_id TEXT;`); err != nil {
+		if !isSQLiteDuplicateColumnError(err) {
+			return err
+		}
+	}
+	if _, err := s.db.Exec(`ALTER TABLE posts ADD COLUMN attachments TEXT;`); err != nil {
+		if !isSQLiteDuplicateColumnError(err) {
+			return err
+		}
+	}
+	if _, err := s.db.Exec(`ALTER TABLE comments ADD COLUMN attachments TEXT;`); err != nil {
+		if !isSQLiteDuplicateColumnError(err) {
+			return err
+		}
+	}
+	if _, err := s.db.Exec(`ALTER TABLE posts ADD COLUMN content_json TEXT;`); err != nil {
+		if !isSQLiteDuplicateColumnError(err) {
+			return err
+		}
+	}
+	if _, err := s.db.Exec(`ALTER TABLE posts ADD COLUMN tags TEXT;`); err != nil {
+		if !isSQLiteDuplicateColumnError(err) {
+			return err
+		}
+	}
+	if _, err := s.db.Exec(`ALTER TABLE comments ADD COLUMN content_json TEXT;`); err != nil {
+		if !isSQLiteDuplicateColumnError(err) {
+			return err
+		}
+	}
+	if _, err := s.db.Exec(`ALTER TABLE comments ADD COLUMN tags TEXT;`); err != nil {
 		if !isSQLiteDuplicateColumnError(err) {
 			return err
 		}
@@ -502,14 +552,14 @@ func (s *SQLiteStore) Posts(boardID string) []Post {
 	)
 	if boardID == "" {
 		rows, err = s.db.Query(
-			`SELECT id, board_id, author_id, title, content, created_at
+			`SELECT id, board_id, author_id, title, content, content_json, tags, attachments, created_at
 			 FROM posts
 			 WHERE deleted_at IS NULL OR TRIM(deleted_at) = ''
 			 ORDER BY seq ASC;`,
 		)
 	} else {
 		rows, err = s.db.Query(
-			`SELECT id, board_id, author_id, title, content, created_at
+			`SELECT id, board_id, author_id, title, content, content_json, tags, attachments, created_at
 			 FROM posts
 			 WHERE board_id = ?
 			   AND (deleted_at IS NULL OR TRIM(deleted_at) = '')
@@ -525,9 +575,15 @@ func (s *SQLiteStore) Posts(boardID string) []Post {
 	var out []Post
 	for rows.Next() {
 		var p Post
-		if err := rows.Scan(&p.ID, &p.BoardID, &p.AuthorID, &p.Title, &p.Content, &p.CreatedAt); err != nil {
+		var contentJSON sql.NullString
+		var tags sql.NullString
+		var attachments sql.NullString
+		if err := rows.Scan(&p.ID, &p.BoardID, &p.AuthorID, &p.Title, &p.Content, &contentJSON, &tags, &attachments, &p.CreatedAt); err != nil {
 			return nil
 		}
+		p.ContentJSON = strings.TrimSpace(contentJSON.String)
+		p.Tags = decodeTags(tags.String)
+		p.Attachments = decodeAttachmentIDs(attachments.String)
 		out = append(out, p)
 	}
 	return out
@@ -536,21 +592,27 @@ func (s *SQLiteStore) Posts(boardID string) []Post {
 func (s *SQLiteStore) GetPost(postID string) (Post, bool) {
 	var post Post
 	var deletedAt sql.NullString
+	var contentJSON sql.NullString
+	var tags sql.NullString
+	var attachments sql.NullString
 	err := s.db.QueryRow(
-		`SELECT id, board_id, author_id, title, content, created_at, deleted_at
+		`SELECT id, board_id, author_id, title, content, content_json, tags, attachments, created_at, deleted_at
 		 FROM posts
 		 WHERE id = ?
 		   AND (deleted_at IS NULL OR TRIM(deleted_at) = '');`,
 		postID,
-	).Scan(&post.ID, &post.BoardID, &post.AuthorID, &post.Title, &post.Content, &post.CreatedAt, &deletedAt)
+	).Scan(&post.ID, &post.BoardID, &post.AuthorID, &post.Title, &post.Content, &contentJSON, &tags, &attachments, &post.CreatedAt, &deletedAt)
 	if err != nil {
 		return Post{}, false
 	}
+	post.ContentJSON = strings.TrimSpace(contentJSON.String)
+	post.Tags = decodeTags(tags.String)
+	post.Attachments = decodeAttachmentIDs(attachments.String)
 	post.DeletedAt = strings.TrimSpace(deletedAt.String)
 	return post, true
 }
 
-func (s *SQLiteStore) CreatePost(boardID, authorID, title, content string) Post {
+func (s *SQLiteStore) CreatePost(boardID, authorID, title, content, contentJSON string, tags, attachments []string) Post {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return Post{}
@@ -563,23 +625,29 @@ func (s *SQLiteStore) CreatePost(boardID, authorID, title, content string) Post 
 	}
 
 	post := Post{
-		ID:        fmt.Sprintf("p_%d", seq),
-		BoardID:   boardID,
-		AuthorID:  authorID,
-		Title:     title,
-		Content:   content,
-		CreatedAt: nowRFC3339(),
+		ID:          fmt.Sprintf("p_%d", seq),
+		BoardID:     boardID,
+		AuthorID:    authorID,
+		Title:       title,
+		Content:     content,
+		ContentJSON: contentJSON,
+		Tags:        tags,
+		Attachments: attachments,
+		CreatedAt:   nowRFC3339(),
 	}
 
 	if _, err := tx.Exec(
-		`INSERT INTO posts(seq, id, board_id, author_id, title, content, created_at, deleted_at)
-		 VALUES(?, ?, ?, ?, ?, ?, ?, NULL);`,
+		`INSERT INTO posts(seq, id, board_id, author_id, title, content, content_json, tags, attachments, created_at, deleted_at)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL);`,
 		seq,
 		post.ID,
 		post.BoardID,
 		post.AuthorID,
 		post.Title,
 		post.Content,
+		post.ContentJSON,
+		encodeTags(post.Tags),
+		encodeAttachmentIDs(post.Attachments),
 		post.CreatedAt,
 	); err != nil {
 		return Post{}
@@ -622,7 +690,7 @@ func (s *SQLiteStore) SoftDeletePost(postID, actorUserID string) error {
 
 func (s *SQLiteStore) Comments(postID string) []Comment {
 	rows, err := s.db.Query(
-		`SELECT id, post_id, parent_id, author_id, content, created_at
+		`SELECT id, post_id, parent_id, author_id, content, content_json, tags, attachments, created_at
 		 FROM comments
 		 WHERE post_id = ?
 		   AND (deleted_at IS NULL OR TRIM(deleted_at) = '')
@@ -638,10 +706,16 @@ func (s *SQLiteStore) Comments(postID string) []Comment {
 	for rows.Next() {
 		var c Comment
 		var parentID sql.NullString
-		if err := rows.Scan(&c.ID, &c.PostID, &parentID, &c.AuthorID, &c.Content, &c.CreatedAt); err != nil {
+		var contentJSON sql.NullString
+		var tags sql.NullString
+		var attachments sql.NullString
+		if err := rows.Scan(&c.ID, &c.PostID, &parentID, &c.AuthorID, &c.Content, &contentJSON, &tags, &attachments, &c.CreatedAt); err != nil {
 			return nil
 		}
 		c.ParentID = strings.TrimSpace(parentID.String)
+		c.ContentJSON = strings.TrimSpace(contentJSON.String)
+		c.Tags = decodeTags(tags.String)
+		c.Attachments = decodeAttachmentIDs(attachments.String)
 		out = append(out, c)
 	}
 	return out
@@ -662,28 +736,67 @@ func (s *SQLiteStore) CommentCount(postID string) int {
 	return count
 }
 
+func (s *SQLiteStore) UserStats(userID string) (int, int, error) {
+	trimmed := strings.TrimSpace(userID)
+	if trimmed == "" {
+		return 0, 0, ErrInvalidInput
+	}
+
+	var postsCount int
+	if err := s.db.QueryRow(
+		`SELECT COUNT(1)
+		 FROM posts
+		 WHERE author_id = ?
+		   AND (deleted_at IS NULL OR TRIM(deleted_at) = '');`,
+		trimmed,
+	).Scan(&postsCount); err != nil {
+		return 0, 0, err
+	}
+
+	var commentsCount int
+	if err := s.db.QueryRow(
+		`SELECT COUNT(1)
+		 FROM comments c
+		 JOIN posts p ON p.id = c.post_id
+		 WHERE c.author_id = ?
+		   AND (c.deleted_at IS NULL OR TRIM(c.deleted_at) = '')
+		   AND (p.deleted_at IS NULL OR TRIM(p.deleted_at) = '');`,
+		trimmed,
+	).Scan(&commentsCount); err != nil {
+		return 0, 0, err
+	}
+
+	return postsCount, commentsCount, nil
+}
+
 func (s *SQLiteStore) GetComment(postID, commentID string) (Comment, bool) {
 	var comment Comment
 	var deletedAt sql.NullString
 	var parentID sql.NullString
+	var contentJSON sql.NullString
+	var tags sql.NullString
+	var attachments sql.NullString
 	err := s.db.QueryRow(
-		`SELECT id, post_id, parent_id, author_id, content, created_at, deleted_at
+		`SELECT id, post_id, parent_id, author_id, content, content_json, tags, attachments, created_at, deleted_at
 		 FROM comments
 		 WHERE post_id = ?
 		   AND id = ?
 		   AND (deleted_at IS NULL OR TRIM(deleted_at) = '');`,
 		postID,
 		commentID,
-	).Scan(&comment.ID, &comment.PostID, &parentID, &comment.AuthorID, &comment.Content, &comment.CreatedAt, &deletedAt)
+	).Scan(&comment.ID, &comment.PostID, &parentID, &comment.AuthorID, &comment.Content, &contentJSON, &tags, &attachments, &comment.CreatedAt, &deletedAt)
 	if err != nil {
 		return Comment{}, false
 	}
 	comment.ParentID = strings.TrimSpace(parentID.String)
+	comment.ContentJSON = strings.TrimSpace(contentJSON.String)
+	comment.Tags = decodeTags(tags.String)
+	comment.Attachments = decodeAttachmentIDs(attachments.String)
 	comment.DeletedAt = strings.TrimSpace(deletedAt.String)
 	return comment, true
 }
 
-func (s *SQLiteStore) CreateComment(postID, authorID, content, parentID string) Comment {
+func (s *SQLiteStore) CreateComment(postID, authorID, content, contentJSON, parentID string, tags, attachments []string) Comment {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return Comment{}
@@ -696,23 +809,29 @@ func (s *SQLiteStore) CreateComment(postID, authorID, content, parentID string) 
 	}
 
 	comment := Comment{
-		ID:        fmt.Sprintf("c_%d", seq),
-		PostID:    postID,
-		ParentID:  parentID,
-		AuthorID:  authorID,
-		Content:   content,
-		CreatedAt: nowRFC3339(),
+		ID:          fmt.Sprintf("c_%d", seq),
+		PostID:      postID,
+		ParentID:    parentID,
+		AuthorID:    authorID,
+		Content:     content,
+		ContentJSON: contentJSON,
+		Tags:        tags,
+		Attachments: attachments,
+		CreatedAt:   nowRFC3339(),
 	}
 
 	if _, err := tx.Exec(
-		`INSERT INTO comments(seq, id, post_id, parent_id, author_id, content, created_at, deleted_at)
-		 VALUES(?, ?, ?, ?, ?, ?, ?, NULL);`,
+		`INSERT INTO comments(seq, id, post_id, parent_id, author_id, content, content_json, tags, attachments, created_at, deleted_at)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL);`,
 		seq,
 		comment.ID,
 		comment.PostID,
 		nullStringOrValue(comment.ParentID),
 		comment.AuthorID,
 		comment.Content,
+		comment.ContentJSON,
+		encodeTags(comment.Tags),
+		encodeAttachmentIDs(comment.Attachments),
 		comment.CreatedAt,
 	); err != nil {
 		return Comment{}
@@ -934,15 +1053,17 @@ func (s *SQLiteStore) ClearCommentVote(postID, commentID, userID string) (int, i
 	return score, 0, nil
 }
 
-func (s *SQLiteStore) SaveFile(uploaderID, filename, storageKey, storagePath string) FileMeta {
+func (s *SQLiteStore) SaveFile(uploaderID, filename, storageKey, storagePath string, width, height int) FileMeta {
 	tx, err := s.db.Begin()
 	if err != nil {
+		log.Printf("[SaveFile] failed to begin transaction: %v", err)
 		return FileMeta{}
 	}
 	defer func() { _ = tx.Rollback() }()
 
 	seq, err := s.nextCounter(tx, "file")
 	if err != nil {
+		log.Printf("[SaveFile] failed to get next counter: %v", err)
 		return FileMeta{}
 	}
 
@@ -952,37 +1073,44 @@ func (s *SQLiteStore) SaveFile(uploaderID, filename, storageKey, storagePath str
 		Filename:    filename,
 		StorageKey:  storageKey,
 		StoragePath: storagePath,
+		Width:       width,
+		Height:      height,
 		CreatedAt:   nowRFC3339(),
 	}
 
 	if _, err := tx.Exec(
-		`INSERT INTO files(seq, id, uploader_id, filename, storage_key, storage_path, created_at)
-		 VALUES(?, ?, ?, ?, ?, ?, ?);`,
+		`INSERT INTO files(seq, id, uploader_id, filename, storage_key, storage_path, width, height, created_at)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?);`,
 		seq,
 		file.ID,
 		file.UploaderID,
 		file.Filename,
 		file.StorageKey,
 		file.StoragePath,
+		file.Width,
+		file.Height,
 		file.CreatedAt,
 	); err != nil {
+		log.Printf("[SaveFile] failed to insert file: %v", err)
 		return FileMeta{}
 	}
 
 	if err := tx.Commit(); err != nil {
+		log.Printf("[SaveFile] failed to commit: %v", err)
 		return FileMeta{}
 	}
+	log.Printf("[SaveFile] saved file: id=%s, path=%s", file.ID, file.StoragePath)
 	return file
 }
 
 func (s *SQLiteStore) GetFile(fileID string) (FileMeta, bool) {
 	var file FileMeta
 	err := s.db.QueryRow(
-		`SELECT id, uploader_id, filename, storage_key, storage_path, created_at
+		`SELECT id, uploader_id, filename, storage_key, storage_path, width, height, created_at
 		 FROM files
 		 WHERE id = ?;`,
 		fileID,
-	).Scan(&file.ID, &file.UploaderID, &file.Filename, &file.StorageKey, &file.StoragePath, &file.CreatedAt)
+	).Scan(&file.ID, &file.UploaderID, &file.Filename, &file.StorageKey, &file.StoragePath, &file.Width, &file.Height, &file.CreatedAt)
 	if err != nil {
 		return FileMeta{}, false
 	}

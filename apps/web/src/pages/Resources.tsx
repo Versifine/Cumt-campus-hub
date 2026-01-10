@@ -3,6 +3,7 @@ import SectionCard from '../components/SectionCard'
 import SiteHeader from '../components/SiteHeader'
 import { uploadFile, type UploadResponse } from '../api/files'
 import { getErrorMessage } from '../api/client'
+import { formatRelativeTimeUTC8 } from '../utils/time'
 
 type UploadItem = UploadResponse & {
   createdAt: string
@@ -97,7 +98,7 @@ const Resources = () => {
                   <div key={item.id} className="resource-item">
                     <div className="resource-item__name">{item.filename}</div>
                     <div className="resource-item__meta">
-                      {new Date(item.createdAt).toLocaleString()}
+                      {formatRelativeTimeUTC8(item.createdAt)}
                     </div>
                     <div className="resource-actions">
                       <a

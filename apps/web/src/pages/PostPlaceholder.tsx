@@ -9,6 +9,7 @@
 } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { getErrorMessage } from '../api/client'
+import { uploadInlineImage } from '../api/uploads'
 import {
   createComment,
   clearCommentVote,
@@ -22,9 +23,17 @@ import {
   type CommentItem,
   type PostDetail,
 } from '../api/posts'
+import CommentMediaBlock from '../components/CommentMediaBlock'
+import RichContent from '../components/RichContent'
+import RichEditor, { type RichEditorHandle, type RichEditorValue } from '../components/RichEditor'
 import SiteHeader from '../components/SiteHeader'
 import { ErrorState } from '../components/StateBlocks'
+import TagInput from '../components/TagInput'
+import InlineAvatar from '../components/InlineAvatar'
 import { useAuth } from '../context/AuthContext'
+import { extractMediaFromContent, normalizeMediaFromAttachments } from '../utils/media'
+import { clearDraft, loadDraft, saveDraft } from '../utils/drafts'
+import { formatRelativeTimeUTC8 } from '../utils/time'
 
 type LoadState<T> = {
   data: T
@@ -33,6 +42,7 @@ type LoadState<T> = {
 }
 
 type VoteState = -1 | 0 | 1
+type VoteAction = 1 | -1
 
 const normalizeVote = (value: number | undefined): VoteState => {
   if (value === 1) {
@@ -43,6 +53,10 @@ const normalizeVote = (value: number | undefined): VoteState => {
   }
   return 0
 }
+
+const maxInlineImageSize = 100 * 1024 * 1024
+
+const isSupportedImage = (file: File) => file.type.startsWith('image/')
 
 type ThreadedComment = CommentItem & {
   children: ThreadedComment[]
@@ -83,11 +97,18 @@ const buildCommentTree = (comments: CommentItem[]) => {
   return roots
 }
 
+const getAuthorAvatar = (author: CommentItem['author']) => {
+  const record = author as { avatar_url?: string | null }
+  return record.avatar_url ?? null
+}
+
+const commentDraftKey = (postId: string) => `draft:comment:${postId}`
+
 const PostPlaceholder = () => {
   const { id } = useParams()
   const navigate = useNavigate()
   const { user } = useAuth()
-  const commentInputRef = useRef<HTMLTextAreaElement | null>(null)
+  const commentEditorRef = useRef<RichEditorHandle | null>(null)
   const [state, setState] = useState<LoadState<PostDetail | null>>({
     data: null,
     loading: true,
@@ -98,7 +119,12 @@ const PostPlaceholder = () => {
     loading: true,
     error: null,
   })
-  const [commentDraft, setCommentDraft] = useState('')
+  const [commentDraft, setCommentDraft] = useState<RichEditorValue>({
+    json: null,
+    text: '',
+  })
+  const [commentTags, setCommentTags] = useState<string[]>([])
+  const [commentDraftHint, setCommentDraftHint] = useState<string | null>(null)
   const [replyTarget, setReplyTarget] = useState<{ id: string; nickname: string } | null>(
     null,
   )
@@ -121,6 +147,29 @@ const PostPlaceholder = () => {
     () => buildCommentTree(commentsState.data),
     [commentsState.data],
   )
+  const postInlineMedia = useMemo(() => {
+    if (!state.data) {
+      return []
+    }
+    return extractMediaFromContent(state.data.content_json)
+  }, [state.data?.content_json])
+  const postAttachmentMedia = useMemo(() => {
+    if (!state.data) {
+      return []
+    }
+    return normalizeMediaFromAttachments(state.data.attachments)
+  }, [state.data?.attachments])
+  const postExtraMedia = useMemo(() => {
+    if (postInlineMedia.length === 0) {
+      return postAttachmentMedia
+    }
+    const inlineUrls = new Set(postInlineMedia.map((item) => item.url))
+    return postAttachmentMedia.filter((item) => !inlineUrls.has(item.url))
+  }, [postAttachmentMedia, postInlineMedia])
+  const canSubmitComment = useMemo(() => {
+    const mediaItems = extractMediaFromContent(commentDraft.json)
+    return commentDraft.text.trim() !== '' || mediaItems.length > 0
+  }, [commentDraft])
 
   const loadPost = useCallback(async () => {
     if (!id) {
@@ -176,11 +225,62 @@ const PostPlaceholder = () => {
     void loadComments()
   }, [loadComments, loadPost])
 
+  useEffect(() => {
+    if (!id) {
+      return
+    }
+    const draft = loadDraft<{
+      content: RichEditorValue
+      tags: string[]
+    }>(commentDraftKey(id))
+    if (!draft) {
+      return
+    }
+    setCommentDraft(draft.data.content)
+    setCommentTags(draft.data.tags)
+  }, [id])
+
+  useEffect(() => {
+    if (!id) {
+      return
+    }
+    const hasDraft =
+      commentDraft.text.trim() !== '' ||
+      Boolean(commentDraft.json) ||
+      commentTags.length > 0
+    if (!hasDraft) {
+      clearDraft(commentDraftKey(id))
+      return
+    }
+    const timer = window.setTimeout(() => {
+      saveDraft(commentDraftKey(id), {
+        content: commentDraft,
+        tags: commentTags,
+      })
+      setCommentDraftHint('草稿已保存')
+      window.setTimeout(() => setCommentDraftHint(null), 1200)
+    }, 1200)
+    return () => window.clearTimeout(timer)
+  }, [commentDraft, commentTags, id])
+
   const handleBack = () => {
     if (window.history.length > 1) {
       navigate(-1)
     } else {
       navigate('/')
+    }
+  }
+
+  const handleAuthorProfile = () => {
+    const authorId = state.data?.author.id
+    if (authorId) {
+      navigate(`/u/${authorId}`)
+    }
+  }
+
+  const handleCommentAuthorProfile = (authorId: string) => {
+    if (authorId) {
+      navigate(`/u/${authorId}`)
     }
   }
 
@@ -198,17 +298,32 @@ const PostPlaceholder = () => {
       return
     }
 
-    if (!commentDraft.trim()) {
-      setCommentError('请输入评论内容')
+    const mediaItems = extractMediaFromContent(commentDraft.json)
+    if (!commentDraft.text.trim() && mediaItems.length === 0) {
+      setCommentError('请输入评论内容或插入图片')
       return
     }
 
     setCommentSubmitting(true)
 
     try {
-      await createComment(id, commentDraft.trim(), replyTarget?.id ?? null)
-      setCommentDraft('')
+      const uploadResult = await commentEditorRef.current?.flushUploads()
+      if (uploadResult?.failed) {
+        setCommentError('图片上传失败，请重试')
+        return
+      }
+      const resolvedJson = uploadResult?.json ?? commentDraft.json
+      await createComment(id, {
+        content: commentDraft.text.trim(),
+        content_json: resolvedJson ?? undefined,
+        tags: commentTags,
+        parent_id: replyTarget?.id ?? null,
+      })
+      setCommentDraft({ json: null, text: '' })
+      setCommentTags([])
       setReplyTarget(null)
+      clearDraft(commentDraftKey(id))
+      commentEditorRef.current?.setContent(null)
       await loadComments()
     } catch (error) {
       setCommentError(getErrorMessage(error))
@@ -269,7 +384,7 @@ const PostPlaceholder = () => {
     }
   }
 
-  const handlePostVote = async (nextVote: VoteState) => {
+  const handlePostVote = async (nextVote: VoteAction) => {
     if (!id) {
       setCommentError('无效的帖子ID')
       return
@@ -298,8 +413,7 @@ const PostPlaceholder = () => {
   }
 
   const handleFocusComment = () => {
-    commentInputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-    commentInputRef.current?.focus()
+    commentEditorRef.current?.focus()
   }
 
   const handlePostShare = async () => {
@@ -320,11 +434,11 @@ const PostPlaceholder = () => {
   const handleReply = (commentId: string, nickname: string) => {
     const mention = `@${nickname} `
     setReplyTarget({ id: commentId, nickname })
-    setCommentDraft((prev) => (prev ? `${prev}\n${mention}` : mention))
-    commentInputRef.current?.focus()
+    commentEditorRef.current?.insertText(mention)
+    commentEditorRef.current?.focus()
   }
 
-  const handleCommentVote = async (commentId: string, nextVote: VoteState) => {
+  const handleCommentVote = async (commentId: string, nextVote: VoteAction) => {
     if (!id) {
       setCommentError('无效的帖子ID')
       return
@@ -380,12 +494,46 @@ const PostPlaceholder = () => {
     }
   }
 
+  const handleInlineImageUpload = async (file: File) => {
+    if (!user) {
+      setCommentError('请先登录后上传图片')
+      throw new Error('unauthorized')
+    }
+    if (!isSupportedImage(file)) {
+      setCommentError('仅支持图片文件')
+      throw new Error('unsupported image')
+    }
+    if (file.size > maxInlineImageSize) {
+      setCommentError('图片不能超过 100MB')
+      throw new Error('image too large')
+    }
+    return uploadInlineImage(file)
+  }
+
+  const handleSaveCommentDraft = () => {
+    if (!id) {
+      return
+    }
+    saveDraft(commentDraftKey(id), {
+      content: commentDraft,
+      tags: commentTags,
+    })
+    setCommentDraftHint('草稿已保存')
+    window.setTimeout(() => setCommentDraftHint(null), 1200)
+  }
+
   const renderComment = (comment: ThreadedComment, depth: number) => {
+    const inlineMedia = extractMediaFromContent(comment.content_json)
+    const attachmentMedia = normalizeMediaFromAttachments(comment.attachments)
+    const inlineUrls = new Set(inlineMedia.map((item) => item.url))
+    const extraMedia = attachmentMedia.filter((item) => !inlineUrls.has(item.url))
+    const commentMedia = inlineMedia.length > 0 ? extraMedia : attachmentMedia
     const vote = commentVotes[comment.id] ?? 0
     const score = commentScores[comment.id] ?? 0
     const shareLabel = commentShareLabels[comment.id] ?? '分享'
     const canDelete = Boolean(user && comment.author.id === user.id)
     const indentLevel = Math.min(depth, 4)
+    const authorAvatar = getAuthorAvatar(comment.author)
     const threadStyle = {
       '--comment-indent': `${indentLevel * 16}px`,
     } as CSSProperties
@@ -399,7 +547,16 @@ const PostPlaceholder = () => {
         <div id={`comment-${comment.id}`} className="comment-item">
           <div className="comment-header">
             <div className="comment-meta">
-              {comment.author.nickname} · {comment.created_at}
+              <button
+                type="button"
+                className="comment-author"
+                onClick={() => handleCommentAuthorProfile(comment.author.id)}
+              >
+                <InlineAvatar name={comment.author.nickname} src={authorAvatar} size={26} />
+                <span>{comment.author.nickname}</span>
+              </button>
+              <span className="comment-meta__dot">·</span>
+              <span>{formatRelativeTimeUTC8(comment.created_at)}</span>
             </div>
             <details className="action-menu">
               <summary className="action-menu__trigger" aria-label="更多操作">
@@ -421,7 +578,12 @@ const PostPlaceholder = () => {
               </div>
             </details>
           </div>
-          <div className="comment-content">{comment.content}</div>
+          <RichContent
+            contentJson={comment.content_json}
+            contentText={comment.content}
+            variant="comment"
+          />
+          <CommentMediaBlock media={commentMedia} variant="comment" />
           <div className="comment-actions">
             <div className="comment-vote-group" aria-label="点赞与点踩">
               <button
@@ -516,11 +678,34 @@ const PostPlaceholder = () => {
                 </details>
               </div>
               <div className="post-detail__meta">
-                {[state.data.author.nickname, state.data.created_at, state.data.board?.name]
-                  .filter(Boolean)
-                  .join(' · ')}
+                <button
+                  type="button"
+                  className="post-meta__author"
+                  onClick={handleAuthorProfile}
+                >
+                  <InlineAvatar
+                    name={state.data.author.nickname}
+                    src={getAuthorAvatar(state.data.author)}
+                    size={28}
+                  />
+                  <span>{state.data.author.nickname}</span>
+                </button>
+                <span className="post-meta__dot">·</span>
+                <span>{formatRelativeTimeUTC8(state.data.created_at)}</span>
+                {state.data.board?.name ? (
+                  <>
+                    <span className="post-meta__dot">·</span>
+                    <span>{state.data.board.name}</span>
+                  </>
+                ) : null}
               </div>
-              <div className="post-detail__content">{state.data.content}</div>
+              <RichContent
+                contentJson={state.data.content_json}
+                contentText={state.data.content}
+              />
+              {postExtraMedia.length > 0 ? (
+                <CommentMediaBlock media={postExtraMedia} variant="post" />
+              ) : null}
               <div className="post-card__actions">
                 <div className="post-card__vote-group" aria-label="点赞与点踩">
                   <button
@@ -591,25 +776,43 @@ const PostPlaceholder = () => {
                       </button>
                     </div>
                   ) : null}
-                  <label className="form-field">
-                    <span className="form-label">发表评论</span>
-                    <textarea
-                      ref={commentInputRef}
-                      className="form-textarea"
-                      value={commentDraft}
-                      onChange={(event) => setCommentDraft(event.target.value)}
-                      placeholder="写下你的观点..."
-                      rows={4}
-                      required
+                  <div className="editor-shell">
+                    <TagInput
+                      value={commentTags}
+                      onChange={setCommentTags}
+                      maxTags={6}
+                      placeholder="Add tags"
                     />
-                  </label>
-                  <button
-                    type="submit"
-                    className="btn btn-primary"
-                    disabled={commentSubmitting}
-                  >
-                    {commentSubmitting ? '提交中...' : '发表评论'}
-                  </button>
+                    <RichEditor
+                      ref={commentEditorRef}
+                      value={commentDraft}
+                      onChange={setCommentDraft}
+                      onImageUpload={handleInlineImageUpload}
+                      deferredUpload
+                      placeholder="Body text (optional)"
+                      disabled={commentSubmitting}
+                    />
+                    {commentDraftHint ? (
+                      <div className="draft-hint">{commentDraftHint}</div>
+                    ) : null}
+                    <div className="editor-actions">
+                      <button
+                        type="button"
+                        className="btn btn-ghost"
+                        onClick={handleSaveCommentDraft}
+                        disabled={commentSubmitting}
+                      >
+                        Save Draft
+                      </button>
+                      <button
+                        type="submit"
+                        className="btn btn-primary"
+                        disabled={commentSubmitting || !canSubmitComment}
+                      >
+                        {commentSubmitting ? '提交中...' : 'Post'}
+                      </button>
+                    </div>
+                  </div>
                 </form>
                 {!user ? (
                   <div className="form-note">

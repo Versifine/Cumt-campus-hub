@@ -5,12 +5,23 @@ export type PostAuthor = {
   nickname: string
 }
 
+export type AttachmentItem = {
+  id: string
+  filename: string
+  url: string
+  width?: number
+  height?: number
+}
+
 export type PostItem = {
   id: string
   title: string
   author: PostAuthor
   created_at: string
   content?: string
+  content_json?: unknown
+  tags?: string[]
+  attachments?: AttachmentItem[]
   board?: PostDetailBoard
   score?: number
   comment_count?: number
@@ -34,6 +45,9 @@ export type PostDetail = {
   author: PostAuthor
   title: string
   content: string
+  content_json?: unknown
+  tags?: string[]
+  attachments?: AttachmentItem[]
   created_at: string
   deleted_at: string | null
   score?: number
@@ -45,6 +59,9 @@ export type CreatePostInput = {
   board_id: string
   title: string
   content: string
+  content_json?: unknown
+  tags?: string[]
+  attachments?: string[]
 }
 
 export type CreatePostResponse = {
@@ -53,6 +70,9 @@ export type CreatePostResponse = {
   author_id: string
   title: string
   content: string
+  content_json?: unknown
+  tags?: string[]
+  attachments?: AttachmentItem[]
   created_at: string
 }
 
@@ -64,6 +84,9 @@ export type CommentItem = {
   id: string
   author: PostAuthor
   content: string
+  content_json?: unknown
+  tags?: string[]
+  attachments?: AttachmentItem[]
   created_at: string
   parent_id?: string | null
   score?: number
@@ -75,6 +98,9 @@ export type CreateCommentResponse = {
   post_id: string
   author_id: string
   content: string
+  content_json?: unknown
+  tags?: string[]
+  attachments?: AttachmentItem[]
   created_at: string
   parent_id?: string | null
   score?: number
@@ -122,7 +148,16 @@ export const createPost = (
 ): Promise<CreatePostResponse> =>
   apiRequest<CreatePostResponse>('/posts', {
     method: 'POST',
-    body: JSON.stringify(payload),
+    body: JSON.stringify({
+      board_id: payload.board_id,
+      title: payload.title,
+      content: payload.content,
+      ...(payload.content_json ? { content_json: payload.content_json } : {}),
+      ...(payload.tags && payload.tags.length > 0 ? { tags: payload.tags } : {}),
+      ...(payload.attachments && payload.attachments.length > 0
+        ? { attachments: payload.attachments }
+        : {}),
+    }),
   })
 
 export const deletePost = (postId: string): Promise<DeletePostResponse> =>
@@ -133,16 +168,28 @@ export const deletePost = (postId: string): Promise<DeletePostResponse> =>
 export const fetchComments = (postId: string): Promise<CommentItem[]> =>
   apiRequest<CommentItem[]>(`/posts/${postId}/comments`)
 
+export type CreateCommentInput = {
+  content: string
+  content_json?: unknown
+  tags?: string[]
+  parent_id?: string | null
+  attachments?: string[]
+}
+
 export const createComment = (
   postId: string,
-  content: string,
-  parentId?: string | null,
+  payload: CreateCommentInput,
 ): Promise<CreateCommentResponse> =>
   apiRequest<CreateCommentResponse>(`/posts/${postId}/comments`, {
     method: 'POST',
     body: JSON.stringify({
-      content,
-      ...(parentId ? { parent_id: parentId } : {}),
+      content: payload.content,
+      ...(payload.content_json ? { content_json: payload.content_json } : {}),
+      ...(payload.tags && payload.tags.length > 0 ? { tags: payload.tags } : {}),
+      ...(payload.parent_id ? { parent_id: payload.parent_id } : {}),
+      ...(payload.attachments && payload.attachments.length > 0
+        ? { attachments: payload.attachments }
+        : {}),
     }),
   })
 

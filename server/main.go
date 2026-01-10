@@ -87,6 +87,14 @@ func main() {
 
 	// 获取当前登录用户信息（通常依赖鉴权 token/cookie 等）。
 	mux.HandleFunc("/api/v1/users/me", authService.MeHandler)
+	mux.HandleFunc("/api/v1/users/", func(w http.ResponseWriter, r *http.Request) {
+		userID := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/users/"), "/")
+		if userID == "" || userID == "me" {
+			transport.WriteError(w, http.StatusNotFound, 2001, "not found")
+			return
+		}
+		authService.PublicUserHandler(userID)(w, r)
+	})
 
 	// -----------------------------
 	// 6) REST API：社区相关
@@ -152,6 +160,7 @@ func main() {
 	// -----------------------------
 	// 上传接口：例如接收 multipart/form-data 或其他格式（取决于实现）。
 	mux.HandleFunc("/api/v1/files", fileHandler.Upload)
+	mux.HandleFunc("/api/uploads/images", fileHandler.UploadImage)
 
 	// 下载接口：通过 /files/{file_id} 访问。
 	// 注意这里是前缀匹配，因此需要手动解析 file_id。
