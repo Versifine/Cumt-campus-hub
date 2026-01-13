@@ -1824,6 +1824,48 @@ textarea:focus-visible {
   text-transform: uppercase;
 }
 
+/* react-photo-view 自定义工具栏样式 */
+.media-viewer-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 0 16px;
+}
+
+.media-viewer-toolbar__index {
+  font-size: 0.9rem;
+  color: rgba(255, 255, 255, 0.9);
+  font-weight: 500;
+}
+
+.media-viewer-toolbar__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.media-viewer-toolbar__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;
+  font-size: 1.25rem;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background 0.15s;
+}
+
+.media-viewer-toolbar__btn:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+/* 旧版 media-viewer 样式（保留用于兼容，可后续删除） */
 .media-viewer {
   position: fixed;
   inset: 0;
@@ -1922,12 +1964,15 @@ textarea:focus-visible {
 
 .media-viewer__stage--zoomed {
   overflow: auto;
+  justify-content: flex-start;
+  align-items: flex-start;
 }
 
 .media-viewer__stage .media-viewer__media {
   cursor: zoom-in;
   position: relative;
   z-index: 1;
+  flex-shrink: 0;
 }
 
 .media-viewer__stage--zoomed .media-viewer__media {
@@ -1941,7 +1986,6 @@ textarea:focus-visible {
 
 .media-viewer__media {
   display: block;
-  margin: auto;
   max-width: 100%;
   max-height: 85vh;
   object-fit: contain;
