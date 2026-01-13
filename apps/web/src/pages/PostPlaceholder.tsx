@@ -24,8 +24,7 @@ import {
   type PostDetail,
 } from '../api/posts'
 import CommentMediaBlock from '../components/CommentMediaBlock'
-import RichContent from '../components/RichContent'
-import RichEditor, { type RichEditorHandle, type RichEditorValue } from '../components/RichEditor'
+import { RichContent, RichEditor, type RichEditorHandle, type RichEditorValue } from '../components/rich-editor'
 import SiteHeader from '../components/SiteHeader'
 import { ErrorState } from '../components/StateBlocks'
 import TagInput from '../components/TagInput'
@@ -167,8 +166,15 @@ const PostPlaceholder = () => {
     return postAttachmentMedia.filter((item) => !inlineUrls.has(item.url))
   }, [postAttachmentMedia, postInlineMedia])
   const canSubmitComment = useMemo(() => {
-    const mediaItems = extractMediaFromContent(commentDraft.json)
-    return commentDraft.text.trim() !== '' || mediaItems.length > 0
+    // 检查是否有图片节点（包括正在上传的 blob URL）
+    const hasImages = (json: unknown): boolean => {
+      if (!json || typeof json !== 'object') return false
+      const node = json as { type?: string; content?: unknown[] }
+      if (node.type === 'image') return true
+      if (Array.isArray(node.content)) return node.content.some(hasImages)
+      return false
+    }
+    return commentDraft.text.trim() !== '' || hasImages(commentDraft.json)
   }, [commentDraft])
 
   const loadPost = useCallback(async () => {
@@ -298,8 +304,15 @@ const PostPlaceholder = () => {
       return
     }
 
-    const mediaItems = extractMediaFromContent(commentDraft.json)
-    if (!commentDraft.text.trim() && mediaItems.length === 0) {
+    // 检查是否有图片节点（包括正在上传的 blob URL）
+    const hasImages = (json: unknown): boolean => {
+      if (!json || typeof json !== 'object') return false
+      const node = json as { type?: string; content?: unknown[] }
+      if (node.type === 'image') return true
+      if (Array.isArray(node.content)) return node.content.some(hasImages)
+      return false
+    }
+    if (!commentDraft.text.trim() && !hasImages(commentDraft.json)) {
       setCommentError('请输入评论内容或插入图片')
       return
     }
@@ -791,6 +804,7 @@ const PostPlaceholder = () => {
                       deferredUpload
                       placeholder="Body text (optional)"
                       disabled={commentSubmitting}
+                      variant="comment"
                     />
                     {commentDraftHint ? (
                       <div className="draft-hint">{commentDraftHint}</div>

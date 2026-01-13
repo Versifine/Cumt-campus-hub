@@ -1115,51 +1115,140 @@ textarea:focus-visible {
   font-size: 0.85em;
 }
 
+/* 图片块容器 - Reddit 风格：无边框无背景，居中显示 */
+.rich-editor__image-block {
+  margin: 16px 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  position: relative;
+}
+
+.rich-editor__image-block.is-uploading {
+  opacity: 0.7;
+}
+
+.rich-editor__image-block img {
+  display: block;
+  max-width: 100%;
+  max-height: 512px;
+  width: auto;
+  height: auto;
+  border-radius: 4px;
+}
+
+/* 图片说明 - Reddit 风格：简单居中小字 */
+.rich-editor__caption {
+  margin-top: 6px;
+  font-size: 0.75rem;
+  color: #787c7e;
+  font-style: italic;
+  text-align: center;
+}
+
+.rich-editor__caption:hover {
+  color: #576f76;
+}
+
+.rich-editor__caption-input {
+  margin-top: 6px;
+  width: 80%;
+  max-width: 400px;
+  padding: 4px 8px;
+  border: none;
+  border-bottom: 1px solid #ccc;
+  background: transparent;
+  font-size: 0.75rem;
+  font-style: italic;
+  text-align: center;
+  color: #1a1a1b;
+  outline: none;
+}
+
+.rich-editor__caption-input:focus {
+  border-bottom-color: var(--accent, #c55f24);
+}
+
+/* 添加说明按钮 */
+.rich-editor__caption-add {
+  margin-top: 6px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  font-size: 0.75rem;
+  color: #787c7e;
+  cursor: pointer;
+}
+
+.rich-editor__caption-add:hover {
+  color: #576f76;
+  text-decoration: underline;
+}
+
+/* 上传中遮罩 */
+.rich-editor__image-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+  font-size: 0.875rem;
+}
+
+.rich-editor__image-overlay--error {
+  background: rgba(180, 50, 50, 0.85);
+}
+
+.rich-editor__image-spinner {
+  width: 24px;
+  height: 24px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.rich-editor__image-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.rich-editor__image-actions button {
+  padding: 6px 16px;
+  border: none;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.rich-editor__image-actions button:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+/* 兼容旧类名 */
 .rich-editor__image {
   position: relative;
   margin: 12px 0;
-  border-radius: 12px;
+  border-radius: 8px;
   overflow: hidden;
-  border: 1px solid rgba(120, 96, 68, 0.2);
-  background: rgba(244, 238, 225, 0.9);
 }
 
 .rich-editor__image img {
   display: block;
   max-width: 100%;
   height: auto;
-}
-
-.rich-editor__image-status {
-  position: absolute;
-  right: 10px;
-  bottom: 10px;
-  padding: 4px 8px;
-  border-radius: 999px;
-  background: rgba(20, 16, 12, 0.7);
-  color: #fff;
-  font-size: 0.75rem;
-}
-
-.rich-editor__image-error {
-  position: absolute;
-  inset: 0;
-  background: rgba(18, 14, 10, 0.6);
-  color: #fff;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  font-size: 0.85rem;
-}
-
-.rich-editor__image-error button {
-  border: none;
-  padding: 4px 10px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.2);
-  color: #fff;
-  cursor: pointer;
 }
 
 .rich-content {
@@ -1203,16 +1292,29 @@ textarea:focus-visible {
   font-size: 0.85em;
 }
 
-.rich-content__image-wrap {
+/* 图片块外层容器 */
+.rich-content__image-block {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin: 12px 0;
+  max-width: 100%;
+}
+
+/* 图片容器（可能有模糊背景） */
+.rich-content__image-container {
   position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
-  margin: 12px 0;
+  max-width: 100%;
+}
+
+/* 需要模糊背景时的样式 */
+.rich-content__image-container.needs-bg {
+  min-height: 100px;
   border-radius: 6px;
   overflow: hidden;
-  max-width: 100%;
-  min-height: 100px;
   background: rgba(244, 238, 225, 0.9);
 }
 
@@ -1220,7 +1322,7 @@ textarea:focus-visible {
   display: none;
 }
 
-.rich-content__image-wrap.needs-bg .rich-content__image-bg {
+.rich-content__image-container.needs-bg .rich-content__image-bg {
   display: block;
   position: absolute;
   inset: -10px;
@@ -1242,12 +1344,12 @@ textarea:focus-visible {
 }
 
 /* 评论模式：小图片保持原始大小，大图片限制高度 */
-.rich-content--comment .rich-content__image-wrap {
+.rich-content--comment .rich-content__image-container {
   justify-content: flex-start;
   background: transparent;
 }
 
-.rich-content--comment .rich-content__image-wrap.needs-bg .rich-content__image-bg {
+.rich-content--comment .rich-content__image-container.needs-bg .rich-content__image-bg {
   display: none;
 }
 
@@ -1258,6 +1360,15 @@ textarea:focus-visible {
   max-height: 300px;
   object-fit: contain;
   border-radius: 6px;
+}
+
+/* RichContent caption 样式 */
+.rich-content__caption {
+  margin-top: 6px;
+  font-size: 0.75rem;
+  color: #787c7e;
+  font-style: italic;
+  text-align: center;
 }
 
 .form-submit {

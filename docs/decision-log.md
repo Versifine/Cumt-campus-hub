@@ -350,3 +350,65 @@ WebSocket 通信采用 **统一事件信封格式**，包含版本号与事件�
 - TODO：新增关注关系接口与分页列表（following/followers）。
 - TODO：用户资料需返回 following_count / followers_count 以支持展示。
 
+---
+
+## DL-015 图片显示策略（Reddit 风格）
+
+* **状态**：Accepted
+* **日期**：2026-01
+
+### 决策
+
+采用分场景的图片显示策略：
+
+1. **帖子内容图片**（RichContent）：
+   - 使用智能模糊背景：当图片宽度无法填满容器 85% 时，显示模糊背景 + 居中图片
+   - 模糊效果：`filter: blur(20px) brightness(0.8)`
+   - 最大高度限制 512px
+
+2. **评论区图片**（RichContent variant="comment"）：
+   - 不使用模糊背景
+   - 小图片保持原始大小，左对齐
+   - 大图片限制最大高度 300px
+   - 背景透明
+
+3. **媒体网格**（CommentMediaBlock）：
+   - 统一使用 `object-fit: cover` 填充容器
+   - 支持 1/2/3/4+ 图片的自适应网格布局
+
+### 原因
+
+- 帖子内容需要优雅处理各种尺寸的图片，模糊背景避免大片留白
+- 评论区更紧凑，小图无需撑满容器
+- 参考 Reddit 的图片展示体验
+
+### 影响
+
+- RichContent 组件新增 `variant` 属性区分帖子/评论
+- CSS 通过 `.rich-content--comment` 类控制评论样式
+- 图片点击可放大预览（需设置 `data-src` 属性）
+
+---
+
+## DL-016 数据库向后兼容迁移策略
+
+* **状态**：Accepted
+* **日期**：2026-01
+
+### 决策
+
+- 数据库迁移采用向后兼容策略：新增列使用 `ALTER TABLE ADD COLUMN`
+- 使用 `isSQLiteDuplicateColumnError` 函数忽略列已存在的错误
+- 迁移语句放在 `migrate()` 函数末尾，与表创建语句分离
+
+### 原因
+
+- `CREATE TABLE IF NOT EXISTS` 不会更新已有表结构
+- 直接 ALTER TABLE 在列已存在时会报错
+- 需要同时支持新数据库创建和旧数据库升级
+
+### 影响
+
+- files 表新增 `width` 和 `height` 列的迁移已添加
+- 未来新增字段需遵循同样模式
+- 所有迁移语句需幂等（可重复执行）

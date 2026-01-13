@@ -4,14 +4,13 @@ import { fetchBoards, type Board } from '../api/boards'
 import { getErrorMessage } from '../api/client'
 import { createPost } from '../api/posts'
 import { uploadInlineImage } from '../api/uploads'
-import RichEditor, { type RichEditorHandle, type RichEditorValue } from '../components/RichEditor'
+import { RichEditor, type RichEditorHandle, type RichEditorValue } from '../components/rich-editor'
 import SectionCard from '../components/SectionCard'
 import SiteHeader from '../components/SiteHeader'
 import { ErrorState } from '../components/StateBlocks'
 import TagInput from '../components/TagInput'
 import { useAuth } from '../context/AuthContext'
 import { clearDraft, loadDraft, saveDraft } from '../utils/drafts'
-import { extractMediaFromContent } from '../utils/media'
 
 const maxInlineImageSize = 100 * 1024 * 1024
 const postDraftKey = 'draft:post'
@@ -21,6 +20,21 @@ type PostDraftPayload = {
   boardId: string
   content: RichEditorValue
   tags: string[]
+}
+
+// Check if content JSON contains any image nodes (including blob URLs)
+const hasImageNodes = (json: unknown): boolean => {
+  if (!json || typeof json !== 'object') {
+    return false
+  }
+  const node = json as { type?: string; content?: unknown[] }
+  if (node.type === 'image') {
+    return true
+  }
+  if (Array.isArray(node.content)) {
+    return node.content.some(hasImageNodes)
+  }
+  return false
 }
 
 // Remove image nodes with blob: URLs from TipTap JSON content
@@ -116,10 +130,15 @@ const Submit = () => {
     }
 
     const timer = window.setTimeout(() => {
+      // 保存前清理 blob URL，只保存已上传成功的图片
+      const sanitizedContent = {
+        json: sanitizeContentJson(content.json),
+        text: content.text,
+      }
       saveDraft(postDraftKey, {
         title,
         boardId,
-        content,
+        content: sanitizedContent,
         tags,
       })
       setDraftHint('草稿已保存')
@@ -136,8 +155,8 @@ const Submit = () => {
     if (!title.trim()) {
       return false
     }
-    const mediaItems = extractMediaFromContent(content.json)
-    return content.text.trim() !== '' || mediaItems.length > 0
+    // Allow submit if there's text content OR any image nodes (including uploading ones)
+    return content.text.trim() !== '' || hasImageNodes(content.json)
   }, [boardId, boards.length, content, title])
 
   const handleInlineImageUpload = async (file: File) => {
@@ -183,8 +202,7 @@ const Submit = () => {
       return
     }
 
-    const mediaItems = extractMediaFromContent(content.json)
-    if (!content.text.trim() && mediaItems.length === 0) {
+    if (!content.text.trim() && !hasImageNodes(content.json)) {
       setSubmitError('请输入内容或插入图片')
       return
     }

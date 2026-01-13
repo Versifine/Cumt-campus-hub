@@ -64,7 +64,7 @@ const getCommentCount = (post: PostItem) => {
 // 智能模糊背景图片组件
 type SmartMediaProps = {
   item: MediaItem
-  onClick?: () => void
+  onClick?: (event: React.MouseEvent<HTMLDivElement>) => void
 }
 
 const SmartMedia = ({ item, onClick }: SmartMediaProps) => {
