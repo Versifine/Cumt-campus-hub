@@ -1,31 +1,28 @@
+import { Skeleton, Card } from 'antd'
+
 type SkeletonProps = {
   count?: number
 }
 
-const boardWidths = ['78%', '64%', '70%', '60%', '74%']
-
 export const BoardSkeletonList = ({ count = 4 }: SkeletonProps) => (
-  <div className="skeleton-stack">
+  <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
     {Array.from({ length: count }).map((_, index) => (
-      <div key={`board-skeleton-${index}`} className="skeleton-item">
-        <div
-          className="skeleton-line"
-          style={{ width: boardWidths[index % boardWidths.length] }}
-        />
-        <div className="skeleton-line skeleton-line--short" />
-      </div>
+      <Skeleton 
+        key={`board-skeleton-${index}`} 
+        active 
+        title={{ width: '40%' }} 
+        paragraph={{ rows: 1, width: '90%' }} 
+      />
     ))}
   </div>
 )
 
 export const PostSkeletonList = ({ count = 4 }: SkeletonProps) => (
-  <div className="skeleton-posts">
+  <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
     {Array.from({ length: count }).map((_, index) => (
-      <div key={`post-skeleton-${index}`} className="skeleton-card">
-        <div className="skeleton-line skeleton-line--wide" />
-        <div className="skeleton-line" />
-        <div className="skeleton-line skeleton-line--meta" />
-      </div>
+      <Card key={`post-skeleton-${index}`} bordered={false} style={{ borderRadius: 12 }}>
+        <Skeleton active avatar paragraph={{ rows: 2 }} />
+      </Card>
     ))}
   </div>
 )

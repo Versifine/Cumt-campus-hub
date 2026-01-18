@@ -1,13 +1,38 @@
-﻿import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react'
+import { useCallback, useEffect, useState, type MouseEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { 
+  Card, 
+  Avatar, 
+  Typography, 
+  Button, 
+  Space, 
+  Tag, 
+  Image, 
+  message, 
+  Dropdown,
+  Carousel,
+  theme
+} from 'antd'
+import { 
+  LikeOutlined, 
+  LikeFilled, 
+  DislikeOutlined, 
+  DislikeFilled, 
+  MessageOutlined, 
+  ShareAltOutlined, 
+  MoreOutlined, 
+  UserOutlined,
+  LeftOutlined,
+  RightOutlined
+} from '@ant-design/icons'
 import type { AttachmentItem, PostItem } from '../api/posts'
 import { clearVote, votePost } from '../api/posts'
 import { getErrorMessage } from '../api/client'
 import { useAuth } from '../context/AuthContext'
 import { formatRelativeTimeUTC8 } from '../utils/time'
 import { extractMediaFromContent, type MediaItem } from '../utils/media'
-import InlineAvatar from './InlineAvatar'
-import MediaViewer from './MediaViewer'
+
+const { Text, Title, Paragraph } = Typography
 
 type PostCardProps = {
   post: PostItem
@@ -21,131 +46,46 @@ const videoExtensions = new Set(['mp4', 'webm', 'ogg'])
 
 const getFileExtension = (filename: string) => {
   const parts = filename.split('.')
-  if (parts.length < 2) {
-    return ''
-  }
+  if (parts.length < 2) return ''
   return parts[parts.length - 1].toLowerCase()
 }
 
 const getAttachmentKind = (attachment: AttachmentItem) => {
   const ext = getFileExtension(attachment.filename)
-  if (imageExtensions.has(ext)) {
-    return 'image'
-  }
-  if (videoExtensions.has(ext)) {
-    return 'video'
-  }
+  if (imageExtensions.has(ext)) return 'image'
+  if (videoExtensions.has(ext)) return 'video'
   return 'file'
 }
 
 const getBoardName = (post: PostItem) => {
-  const record = post as PostItem & {
-    board?: { name?: string }
-    board_name?: string
-  }
+  const record = post as any
   const boardName = record.board?.name ?? record.board_name
-  if (!boardName || typeof boardName !== 'string') {
-    return null
-  }
-  const trimmed = boardName.trim()
-  return trimmed.length > 0 ? trimmed : null
-}
-
-const getCommentCount = (post: PostItem) => {
-  const record = post as PostItem & {
-    comment_count?: number
-    comments?: number
-    reply_count?: number
-  }
-  const count = record.comment_count ?? record.comments ?? record.reply_count
-  return typeof count === 'number' ? count : 0
-}
-
-// 智能模糊背景图片组件
-type SmartMediaProps = {
-  item: MediaItem
-  onClick?: () => void
-}
-
-const SmartMedia = ({ item, onClick }: SmartMediaProps) => {
-  const containerRef = useRef<HTMLDivElement>(null)
-  const [needsBg, setNeedsBg] = useState(false)
-  const [loaded, setLoaded] = useState(false)
-
-  const checkNeedsBg = useCallback((img: HTMLImageElement) => {
-    const container = containerRef.current
-    if (!container || !img.naturalWidth || !img.naturalHeight) {
-      return
-    }
-    // 计算图片在 max-height 限制下的显示宽度
-    const containerWidth = container.clientWidth
-    const maxHeight = 512
-    const displayHeight = Math.min(img.naturalHeight, maxHeight)
-    const displayWidth = (displayHeight / img.naturalHeight) * img.naturalWidth
-    // 如果图片显示宽度小于容器宽度的 85%，需要模糊背景
-    setNeedsBg(displayWidth < containerWidth * 0.85)
-  }, [])
-
-  if (item.type === 'video') {
-    return (
-      <div className="post-card__media-inner" ref={containerRef}>
-        <video src={item.url} controls preload="metadata" />
-      </div>
-    )
-  }
-
-  return (
-    <div
-      className={`post-card__media-inner ${needsBg ? 'needs-bg' : ''}`}
-      ref={containerRef}
-      onClick={onClick}
-    >
-      {needsBg && loaded ? (
-        <div
-          className="post-card__media-bg"
-          style={{ backgroundImage: `url(${item.url})` }}
-        />
-      ) : null}
-      <img
-        src={item.url}
-        alt={item.alt ?? 'media'}
-        loading="lazy"
-        onLoad={(e) => {
-          setLoaded(true)
-          checkNeedsBg(e.currentTarget)
-        }}
-      />
-    </div>
-  )
+  return boardName?.trim() || null
 }
 
 const normalizeVote = (value: number | undefined): VoteState => {
-  if (value === 1) {
-    return 1
-  }
-  if (value === -1) {
-    return -1
-  }
+  if (value === 1) return 1
+  if (value === -1) return -1
   return 0
 }
 
 const PostCard = ({ post }: PostCardProps) => {
   const navigate = useNavigate()
   const { user } = useAuth()
+  const { token } = theme.useToken()
+  
   const timeLabel = formatRelativeTimeUTC8(post.created_at)
   const boardName = getBoardName(post)
-  const authorAvatar = (post.author as { avatar_url?: string | null }).avatar_url ?? null
-  const commentCount = getCommentCount(post)
-  const baseScore = typeof post.score === 'number' ? post.score : 0
-  const baseVote = normalizeVote(post.my_vote)
+  const authorAvatar = (post.author as any).avatar_url ?? null
+  const commentCount = (post as any).comment_count ?? (post as any).comments ?? 0
+  
   const content = post.content?.trim()
   const inlineMedia = extractMediaFromContent(post.content_json)
-  const primaryInline = inlineMedia[0]
   const attachments = post.attachments ?? []
 
-  // Build media list for viewer
-  const mediaItems: MediaItem[] = primaryInline
-    ? inlineMedia
+  // Build media list
+  const mediaItems: MediaItem[] = inlineMedia.length > 0 
+    ? inlineMedia 
     : attachments
         .map((att) => {
           const kind = getAttachmentKind(att)
@@ -160,237 +100,162 @@ const PostCard = ({ post }: PostCardProps) => {
         })
         .filter((item): item is MediaItem => item !== null)
 
-  const [vote, setVote] = useState<VoteState>(baseVote)
-  const [score, setScore] = useState(baseScore)
-  const [shareLabel, setShareLabel] = useState('分享')
+  const [vote, setVote] = useState<VoteState>(normalizeVote(post.my_vote))
+  const [score, setScore] = useState(post.score ?? 0)
   const [pending, setPending] = useState(false)
-  const [hint, setHint] = useState<string | null>(null)
-  const [viewerOpen, setViewerOpen] = useState(false)
-  const [viewerIndex, setViewerIndex] = useState(0)
-  const [previewIndex, setPreviewIndex] = useState(0)
 
   useEffect(() => {
-    setVote(baseVote)
-    setScore(baseScore)
-  }, [baseVote, baseScore, post.id])
+    setVote(normalizeVote(post.my_vote))
+    setScore(post.score ?? 0)
+  }, [post.my_vote, post.score, post.id])
 
-  const metaItems = [timeLabel].filter(
-    (item): item is string => Boolean(item),
-  )
-
-  const navigateToPost = () => {
-    navigate(`/post/${post.id}`)
-  }
-
-  const handleCardKeyDown = (event: KeyboardEvent<HTMLElement>) => {
-    if (event.key === 'Enter' || event.key === ' ') {
-      event.preventDefault()
-      navigateToPost()
-    }
-  }
-
-  const stopCardNavigation = (event: MouseEvent<HTMLElement>) => {
-    event.preventDefault()
-    event.stopPropagation()
-  }
-
-  const stopCardPropagation = (
-    event: MouseEvent<HTMLElement> | KeyboardEvent<HTMLElement>,
-  ) => {
-    event.stopPropagation()
-  }
-
-  const handleVote = (nextVote: VoteAction) => async (
-    event: MouseEvent<HTMLButtonElement>,
-  ) => {
-    stopCardNavigation(event)
-    setHint(null)
-
+  const handleVote = (nextVote: VoteAction) => async (e: MouseEvent) => {
+    e.stopPropagation()
     if (!user) {
-      setHint('请先登录后再投票')
+      message.info('请先登录')
       return
     }
-
-    if (pending) {
-      return
-    }
-
+    if (pending) return
     setPending(true)
-
     try {
-      const response =
-        nextVote === vote
-          ? await clearVote(post.id)
-          : await votePost(post.id, nextVote)
-
+      const response = nextVote === vote 
+        ? await clearVote(post.id) 
+        : await votePost(post.id, nextVote)
       setVote(normalizeVote(response.my_vote))
       setScore(response.score)
     } catch (error) {
-      setHint(getErrorMessage(error))
+      message.error(getErrorMessage(error))
     } finally {
       setPending(false)
     }
   }
 
-  const handleComment = (event: MouseEvent<HTMLButtonElement>) => {
-    stopCardNavigation(event)
-    navigateToPost()
-  }
+  const navigateToPost = () => navigate(`/post/${post.id}`)
 
-  const handleAuthorClick = (event: MouseEvent<HTMLButtonElement>) => {
-    stopCardNavigation(event)
-    navigate(`/u/${post.author.id}`)
-  }
-
-  const handleShare = async (event: MouseEvent<HTMLButtonElement>) => {
-    stopCardNavigation(event)
-
+  const handleShare = async (e: MouseEvent) => {
+    e.stopPropagation()
     const url = new URL(`/post/${post.id}`, window.location.origin).toString()
-
     try {
       await navigator.clipboard.writeText(url)
-      setShareLabel('已复制')
+      message.success('链接已复制')
     } catch {
-      setShareLabel('复制失败')
-    } finally {
-      window.setTimeout(() => setShareLabel('分享'), 1500)
+      message.error('复制失败')
     }
   }
 
-  const handleMediaClick = (event: MouseEvent<HTMLDivElement>) => {
-    stopCardNavigation(event)
-    if (mediaItems.length > 0) {
-      setViewerIndex(previewIndex)
-      setViewerOpen(true)
-    }
-  }
-
-  const handlePrevMedia = (event: MouseEvent<HTMLButtonElement>) => {
-    stopCardNavigation(event)
-    setPreviewIndex((prev) => (prev - 1 + mediaItems.length) % mediaItems.length)
-  }
-
-  const handleNextMedia = (event: MouseEvent<HTMLButtonElement>) => {
-    stopCardNavigation(event)
-    setPreviewIndex((prev) => (prev + 1) % mediaItems.length)
-  }
+  const images = mediaItems.filter(m => m.type === 'image')
 
   return (
-    <article
-      className="post-card"
-      role="link"
-      tabIndex={0}
-      aria-label={post.title}
+    <Card
+      hoverable
       onClick={navigateToPost}
-      onKeyDown={handleCardKeyDown}
+      style={{ marginBottom: 16, borderRadius: 12, border: 'none', boxShadow: '0 2px 8px rgba(0,0,0,0.04)' }}
+      bodyStyle={{ padding: '20px 24px' }}
     >
-      <div className="post-card__body">
-        <div className="post-card__top">
-          <h3 className="post-card__title">{post.title}</h3>
-          <details className="action-menu post-card__menu">
-            <summary
-              className="action-menu__trigger"
-              aria-label="更多操作"
-              onClick={stopCardPropagation}
-              onKeyDown={stopCardPropagation}
-            >
-              ...
-            </summary>
-            <div className="action-menu__panel" role="menu" onClick={stopCardPropagation}>
-              <span className="action-menu__empty">暂无操作</span>
-            </div>
-          </details>
-        </div>
-        <div className="post-card__meta">
-          <span className="post-card__meta-item">
-            <button
-              type="button"
-              className="post-card__meta-button"
-              onClick={handleAuthorClick}
-            >
-              <InlineAvatar name={post.author.nickname} src={authorAvatar} size={28} />
-              <span>{post.author.nickname}</span>
-            </button>
-          </span>
-          {metaItems.map((item, index) => (
-            <span key={`${item}-${index}`} className="post-card__meta-item">
-              {item}
-            </span>
-          ))}
-          {boardName ? <span className="post-card__badge">{boardName}</span> : null}
-        </div>
-        {content ? <p className="post-card__content">{content}</p> : null}
-        {mediaItems.length > 0 ? (
-          <div className="post-card__media-carousel">
-            <div className="post-card__media">
-              <SmartMedia item={mediaItems[previewIndex]} onClick={handleMediaClick} />
-            </div>
-            {mediaItems.length > 1 ? (
-              <>
-                <button
-                  type="button"
-                  className="post-card__carousel-btn post-card__carousel-btn--prev"
-                  onClick={handlePrevMedia}
-                  aria-label="上一张"
-                >
-                  {'<'}
-                </button>
-                <button
-                  type="button"
-                  className="post-card__carousel-btn post-card__carousel-btn--next"
-                  onClick={handleNextMedia}
-                  aria-label="下一张"
-                >
-                  {'>'}
-                </button>
-                <div className="post-card__carousel-indicator">
-                  {previewIndex + 1} / {mediaItems.length}
-                </div>
-              </>
-            ) : null}
+      {/* Header: Author & Meta */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
+        <Space align="center" size={12} onClick={(e) => { e.stopPropagation(); navigate(`/u/${post.author.id}`) }} style={{ cursor: 'pointer' }}>
+          <Avatar 
+            src={authorAvatar} 
+            icon={<UserOutlined />} 
+            style={{ backgroundColor: token.colorPrimary }}
+          >
+            {post.author.nickname?.[0]?.toUpperCase()}
+          </Avatar>
+          <div style={{ lineHeight: 1.2 }}>
+            <Text strong style={{ display: 'block' }}>{post.author.nickname}</Text>
+            <Text type="secondary" style={{ fontSize: '0.8rem' }}>
+              {timeLabel} · {boardName && <Tag bordered={false} style={{ marginLeft: 4 }}>{boardName}</Tag>}
+            </Text>
           </div>
-        ) : null}
-        <div className="post-card__actions">
-          <div className="post-card__vote-group" aria-label="点赞与点踩">
-            <button
-              type="button"
-              className={vote === 1 ? 'post-card__vote-btn is-active' : 'post-card__vote-btn'}
-              onClick={handleVote(1)}
-              aria-pressed={vote === 1}
-              disabled={pending}
-            >
-              赞
-            </button>
-            <span className="post-card__vote-score" aria-label={`分值 ${score}`}>
-              {score}
-            </span>
-            <button
-              type="button"
-              className={vote === -1 ? 'post-card__vote-btn is-active' : 'post-card__vote-btn'}
-              onClick={handleVote(-1)}
-              aria-pressed={vote === -1}
-              disabled={pending}
-            >
-              踩
-            </button>
-          </div>
-          <button type="button" className="post-card__action" onClick={handleComment}>
-            评论
-            <span className="post-card__action-count">{commentCount}</span>
-          </button>
-          <button type="button" className="post-card__action" onClick={handleShare}>
-            {shareLabel}
-          </button>
-        </div>
-        {hint ? <div className="post-card__hint">{hint}</div> : null}
+        </Space>
+        
+        <Dropdown menu={{ items: [{ key: 'report', label: '举报' }] }} trigger={['click']}>
+           <Button type="text" icon={<MoreOutlined />} onClick={(e) => e.stopPropagation()} />
+        </Dropdown>
       </div>
-      <MediaViewer
-        items={mediaItems}
-        open={viewerOpen}
-        startIndex={viewerIndex}
-        onClose={() => setViewerOpen(false)}
-      />
-    </article>
+
+      {/* Content */}
+      <div style={{ marginBottom: 12 }}>
+        <Title level={4} style={{ marginTop: 0, marginBottom: 8, fontSize: '1.1rem' }}>
+          {post.title}
+        </Title>
+        {content && (
+          <Paragraph ellipsis={{ rows: 3 }} type="secondary" style={{ fontSize: '0.95rem' }}>
+            {content}
+          </Paragraph>
+        )}
+      </div>
+
+      {/* Media Preview */}
+      {images.length > 0 && (
+        <div style={{ marginBottom: 16 }} onClick={(e) => e.stopPropagation()}>
+          <Image.PreviewGroup>
+            <Carousel 
+              arrows 
+              infinite={false}
+              prevArrow={<Button type="text" icon={<LeftOutlined />} />}
+              nextArrow={<Button type="text" icon={<RightOutlined />} />}
+              style={{ 
+                background: '#f5f5f5', 
+                borderRadius: 8,
+                overflow: 'hidden'
+              }}
+            >
+              {images.map((img, idx) => (
+                <div key={idx}>
+                  <div style={{ 
+                    display: 'flex', 
+                    justifyContent: 'center', 
+                    alignItems: 'center', 
+                    height: 400,
+                    position: 'relative'
+                  }}>
+                    <Image 
+                      src={img.url} 
+                      alt="post media"
+                      style={{ maxHeight: 400, maxWidth: '100%', objectFit: 'contain' }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </Carousel>
+          </Image.PreviewGroup>
+        </div>
+      )}
+
+      {/* Actions */}
+      <div style={{ display: 'flex', gap: 16, marginTop: 4 }}>
+        <Button 
+          type="text" 
+          icon={vote === 1 ? <LikeFilled style={{ color: token.colorPrimary }} /> : <LikeOutlined />}
+          onClick={handleVote(1)}
+          style={{ color: vote === 1 ? token.colorPrimary : undefined }}
+        >
+          {score}
+        </Button>
+        <Button 
+          type="text" 
+          icon={vote === -1 ? <DislikeFilled style={{ color: token.colorPrimary }} /> : <DislikeOutlined />}
+          onClick={handleVote(-1)}
+          style={{ color: vote === -1 ? token.colorPrimary : undefined }}
+        />
+        <Button 
+          type="text" 
+          icon={<MessageOutlined />}
+          onClick={(e) => { e.stopPropagation(); navigateToPost() }}
+        >
+          {commentCount}
+        </Button>
+        <Button 
+          type="text" 
+          icon={<ShareAltOutlined />}
+          onClick={handleShare}
+        >
+          分享
+        </Button>
+      </div>
+    </Card>
   )
 }
 

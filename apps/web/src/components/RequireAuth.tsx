@@ -1,5 +1,6 @@
-﻿import type { ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import { Navigate, useLocation } from 'react-router-dom'
+import { Spin } from 'antd'
 import { useAuth } from '../context/AuthContext'
 
 const RequireAuth = ({ children }: { children: ReactNode }) => {
@@ -8,7 +9,11 @@ const RequireAuth = ({ children }: { children: ReactNode }) => {
   const from = `${location.pathname}${location.search}`
 
   if (checking) {
-    return <div className="page-status">正在校验登录状态...</div>
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
+        <Spin size="large" tip="正在校验登录状态..." />
+      </div>
+    )
   }
 
   if (!user) {

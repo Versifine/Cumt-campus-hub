@@ -1,17 +1,29 @@
-﻿import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { 
+  Layout, 
+  Card, 
+  Form, 
+  Input, 
+  Select, 
+  Button, 
+  Alert, 
+  Typography, 
+  Space,
+  message,
+  theme
+} from 'antd'
 import { fetchBoards, type Board } from '../api/boards'
 import { getErrorMessage } from '../api/client'
 import { createPost } from '../api/posts'
 import { uploadInlineImage } from '../api/uploads'
-import RichEditor, { type RichEditorHandle, type RichEditorValue } from '../components/RichEditor'
-import SectionCard from '../components/SectionCard'
+import { RichEditor, type RichEditorHandle, type RichEditorValue } from '../components/rich-editor'
 import SiteHeader from '../components/SiteHeader'
-import { ErrorState } from '../components/StateBlocks'
-import TagInput from '../components/TagInput'
 import { useAuth } from '../context/AuthContext'
 import { clearDraft, loadDraft, saveDraft } from '../utils/drafts'
-import { extractMediaFromContent } from '../utils/media'
+
+const { Content } = Layout
+const { Title, Text } = Typography
 
 const maxInlineImageSize = 100 * 1024 * 1024
 const postDraftKey = 'draft:post'
@@ -23,22 +35,20 @@ type PostDraftPayload = {
   tags: string[]
 }
 
-// Remove image nodes with blob: URLs from TipTap JSON content
-// These URLs are temporary and won't work after page reload
+const hasImageNodes = (json: unknown): boolean => {
+  if (!json || typeof json !== 'object') return false
+  const node = json as any
+  if (node.type === 'image') return true
+  if (Array.isArray(node.content)) return node.content.some(hasImageNodes)
+  return false
+}
+
 const sanitizeContentJson = (json: unknown): unknown => {
-  if (!json || typeof json !== 'object') {
-    return json
-  }
-  const node = json as { type?: string; attrs?: { src?: string }; content?: unknown[] }
-  // Remove image nodes with blob URLs
-  if (node.type === 'image' && node.attrs?.src?.startsWith('blob:')) {
-    return null
-  }
-  // Recursively process content array
+  if (!json || typeof json !== 'object') return json
+  const node = json as any
+  if (node.type === 'image' && node.attrs?.src?.startsWith('blob:')) return null
   if (Array.isArray(node.content)) {
-    const filtered = node.content
-      .map(sanitizeContentJson)
-      .filter((item): item is object => item !== null)
+    const filtered = node.content.map(sanitizeContentJson).filter((item: any) => item !== null)
     return { ...node, content: filtered }
   }
   return json
@@ -47,174 +57,113 @@ const sanitizeContentJson = (json: unknown): unknown => {
 const Submit = () => {
   const navigate = useNavigate()
   const { user } = useAuth()
+  const { token } = theme.useToken()
+  const [form] = Form.useForm()
+
   const [boards, setBoards] = useState<Board[]>([])
   const [loading, setLoading] = useState(true)
-  const [loadError, setLoadError] = useState<string | null>(null)
-  const [boardId, setBoardId] = useState('')
-  const [title, setTitle] = useState('')
-  const [content, setContent] = useState<RichEditorValue>({
-    json: null,
-    text: '',
-  })
+  const [content, setContent] = useState<RichEditorValue>({ json: null, text: '' })
   const editorRef = useRef<RichEditorHandle | null>(null)
-  const [tags, setTags] = useState<string[]>([])
-  const [draftHint, setDraftHint] = useState<string | null>(null)
-  const [submitError, setSubmitError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [submitError, setSubmitError] = useState<string | null>(null)
 
   const loadBoards = useCallback(async () => {
     setLoading(true)
-    setLoadError(null)
-
     try {
       const data = await fetchBoards()
       setBoards(data)
     } catch (error) {
-      setLoadError(getErrorMessage(error))
+      message.error(getErrorMessage(error))
     } finally {
       setLoading(false)
     }
   }, [])
 
   useEffect(() => {
-    void loadBoards()
+    loadBoards()
   }, [loadBoards])
 
+  // Load draft
   useEffect(() => {
     const draft = loadDraft<PostDraftPayload>(postDraftKey)
-    if (!draft) {
-      return
+    if (draft) {
+      form.setFieldsValue({
+        title: draft.data.title,
+        boardId: draft.data.boardId,
+        tags: draft.data.tags
+      })
+      const draftContent = draft.data.content ?? { json: null, text: '' }
+      const sanitizedJson = sanitizeContentJson(draftContent.json)
+      setContent({ json: sanitizedJson as any, text: draftContent.text })
     }
-    setTitle(draft.data.title ?? '')
-    setBoardId(draft.data.boardId ?? '')
-    // Sanitize draft content to remove blob URLs that won't work after reload
-    const draftContent = draft.data.content ?? { json: null, text: '' }
-    const sanitizedJson = sanitizeContentJson(draftContent.json)
-    setContent({ json: sanitizedJson as typeof draftContent.json, text: draftContent.text })
-    setTags(draft.data.tags ?? [])
-  }, [])
+  }, [form])
 
+  // Auto save draft
   useEffect(() => {
-    if (boards.length === 0) {
-      return
-    }
-    if (!boardId || !boards.some((board) => board.id === boardId)) {
-      setBoardId(boards[0].id)
-    }
-  }, [boards, boardId])
-
-  useEffect(() => {
-    const hasDraft =
-      title.trim() !== '' ||
-      content.text.trim() !== '' ||
-      Boolean(content.json) ||
-      tags.length > 0
+    const values = form.getFieldsValue()
+    const hasDraft = values.title || content.text || hasImageNodes(content.json) || (values.tags && values.tags.length > 0)
 
     if (!hasDraft) {
       clearDraft(postDraftKey)
       return
     }
 
-    const timer = window.setTimeout(() => {
+    const timer = setTimeout(() => {
       saveDraft(postDraftKey, {
-        title,
-        boardId,
-        content,
-        tags,
+        title: values.title,
+        boardId: values.boardId,
+        content: { json: sanitizeContentJson(content.json) as any, text: content.text },
+        tags: values.tags
       })
-      setDraftHint('草稿已保存')
-      window.setTimeout(() => setDraftHint(null), 1200)
-    }, 1200)
+    }, 1500)
 
-    return () => window.clearTimeout(timer)
-  }, [boardId, content, tags, title])
-
-  const canSubmit = useMemo(() => {
-    if (boards.length === 0 || !boardId.trim()) {
-      return false
-    }
-    if (!title.trim()) {
-      return false
-    }
-    const mediaItems = extractMediaFromContent(content.json)
-    return content.text.trim() !== '' || mediaItems.length > 0
-  }, [boardId, boards.length, content, title])
+    return () => clearTimeout(timer)
+  }, [content, form])
 
   const handleInlineImageUpload = async (file: File) => {
     if (!user) {
-      setSubmitError('请先登录后上传图片')
+      message.error('请先登录')
       throw new Error('unauthorized')
     }
-    if (!file.type.startsWith('image/')) {
-      setSubmitError('仅支持图片文件')
-      throw new Error('unsupported image')
-    }
     if (file.size > maxInlineImageSize) {
-      setSubmitError('图片不能超过 100MB')
-      throw new Error('image too large')
+      message.error('图片过大')
+      throw new Error('too large')
     }
     return uploadInlineImage(file)
   }
 
-  const handleSaveDraft = () => {
-    saveDraft(postDraftKey, {
-      title,
-      boardId,
-      content,
-      tags,
-    })
-    setDraftHint('草稿已保存')
-    window.setTimeout(() => setDraftHint(null), 1200)
-  }
-
-  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    setSubmitError(null)
-
-    if (boards.length === 0) {
-      return
-    }
-    if (!title.trim()) {
-      setSubmitError('请填写标题')
-      return
-    }
-    if (!boardId) {
-      setSubmitError('请选择版块')
-      return
-    }
-
-    const mediaItems = extractMediaFromContent(content.json)
-    if (!content.text.trim() && mediaItems.length === 0) {
+  const handleSubmit = async (values: any) => {
+    if (!content.text.trim() && !hasImageNodes(content.json)) {
       setSubmitError('请输入内容或插入图片')
       return
     }
 
     setSubmitting(true)
+    setSubmitError(null)
 
     try {
       const uploadResult = await editorRef.current?.flushUploads()
       if (uploadResult?.failed) {
-        setSubmitError('图片上传失败，请重试')
+        setSubmitError('部分图片上传失败')
         return
       }
+
       const resolvedJson = uploadResult?.json ?? content.json
-      // Safety check: ensure no blob URLs are being submitted
-      const jsonStr = JSON.stringify(resolvedJson ?? {})
-      if (jsonStr.includes('blob:')) {
-        setSubmitError('部分图片上传失败，请检查图片并重试')
+      if (JSON.stringify(resolvedJson).includes('blob:')) {
+        setSubmitError('图片尚未上传完成')
         return
       }
+
       await createPost({
-        board_id: boardId,
-        title: title.trim(),
+        board_id: values.boardId,
+        title: values.title.trim(),
         content: content.text.trim(),
         content_json: resolvedJson ?? undefined,
-        tags,
+        tags: values.tags,
       })
+
       clearDraft(postDraftKey)
-      setTitle('')
-      setContent({ json: null, text: '' })
-      setTags([])
+      message.success('发布成功')
       navigate('/')
     } catch (error) {
       setSubmitError(getErrorMessage(error))
@@ -223,109 +172,78 @@ const Submit = () => {
     }
   }
 
-  const handleCancel = () => {
-    if (window.history.length > 1) {
-      navigate(-1)
-    } else {
-      navigate('/')
+  // Set default board if available
+  useEffect(() => {
+    if (boards.length > 0 && !form.getFieldValue('boardId')) {
+      form.setFieldsValue({ boardId: boards[0].id })
     }
-  }
+  }, [boards, form])
 
   return (
-    <div className="app-shell">
+    <Layout style={{ minHeight: '100vh', background: 'transparent' }}>
       <SiteHeader />
-      <main className="form-page">
-        <SectionCard title="发布帖子">
-          {loading ? (
-            <div className="page-status">正在加载版块...</div>
-          ) : loadError ? (
-            <ErrorState message={loadError} onRetry={loadBoards} />
-          ) : (
-            <form className="post-form" onSubmit={handleSubmit}>
-              {boards.length === 0 ? (
-                <div className="form-note">
-                  暂无版块，暂时无法发帖。请先在后端初始化至少一个版块。
-                </div>
-              ) : null}
-              <label className="form-field">
-                <span className="form-label">版块</span>
-                <select
-                  className="form-select"
-                  value={boards.length === 0 ? '' : boardId}
-                  onChange={(event) => setBoardId(event.target.value)}
-                  disabled={boards.length === 0}
-                >
-                  {boards.length === 0 ? (
-                    <option value="">暂无版块</option>
-                  ) : (
-                    boards.map((board) => (
-                      <option key={board.id} value={board.id}>
-                        {board.name}
-                      </option>
-                    ))
-                  )}
-                </select>
-              </label>
-              <label className="form-field">
-                <span className="form-label">标题</span>
-                <input
-                  className="form-input"
-                  value={title}
-                  onChange={(event) => setTitle(event.target.value)}
-                  placeholder="请输入帖子标题"
-                  required
-                />
-              </label>
-              <div className="editor-shell">
-                <TagInput value={tags} onChange={setTags} maxTags={8} placeholder="Add tags" />
-                <RichEditor
-                  ref={editorRef}
-                  value={content}
-                  onChange={setContent}
-                  onImageUpload={handleInlineImageUpload}
-                  deferredUpload
-                  placeholder="Body text (optional)"
-                  disabled={submitting}
-                />
-                <div className="form-hint">支持拖拽/粘贴图片，单张图片不超过 100MB。</div>
-                {draftHint ? <div className="draft-hint">{draftHint}</div> : null}
-                <div className="editor-actions">
-                  <button
-                    type="button"
-                    className="btn btn-ghost"
-                    onClick={handleSaveDraft}
-                    disabled={submitting}
-                  >
-                    Save Draft
-                  </button>
-                  <button
-                    type="submit"
-                    className="btn btn-primary"
-                    disabled={submitting || !canSubmit}
-                  >
-                    {submitting ? '提交中...' : 'Post'}
-                  </button>
-                </div>
-              </div>
-              {submitError ? <div className="form-error">{submitError}</div> : null}
-              <div className="form-actions">
-                <button
-                  type="button"
-                  className="btn btn-ghost"
-                  onClick={handleCancel}
-                  disabled={submitting}
-                >
-                  取消
-                </button>
-              </div>
-            </form>
-          )}
-        </SectionCard>
-      </main>
-    </div>
+      <Content style={{ maxWidth: 840, margin: '24px auto', width: '100%', padding: '0 24px' }}>
+        <Card title="发布帖子" bordered={false} style={{ borderRadius: 12, boxShadow: '0 4px 12px rgba(0,0,0,0.05)' }}>
+          <Form 
+            form={form} 
+            layout="vertical" 
+            onFinish={handleSubmit}
+            disabled={loading || submitting}
+          >
+            <Form.Item 
+              name="boardId" 
+              label="版块" 
+              rules={[{ required: true, message: '请选择版块' }]}
+            >
+              <Select placeholder="选择版块" loading={boards.length === 0}>
+                {boards.map(b => (
+                  <Select.Option key={b.id} value={b.id}>{b.name}</Select.Option>
+                ))}
+              </Select>
+            </Form.Item>
+
+            <Form.Item 
+              name="title" 
+              label="标题" 
+              rules={[{ required: true, message: '请输入标题' }]}
+            >
+              <Input placeholder="请输入帖子标题" size="large" />
+            </Form.Item>
+
+            <Form.Item label="内容">
+              <RichEditor
+                ref={editorRef}
+                value={content}
+                onChange={setContent}
+                onImageUpload={handleInlineImageUpload}
+                deferredUpload
+                placeholder="分享你的想法..."
+                disabled={submitting}
+              />
+              <Text type="secondary" style={{ fontSize: '0.8rem', marginTop: 8, display: 'block' }}>
+                支持拖拽上传图片
+              </Text>
+            </Form.Item>
+
+            <Form.Item name="tags" label="标签">
+              <Select mode="tags" placeholder="输入标签按回车" tokenSeparators={[',', ' ']} />
+            </Form.Item>
+
+            {submitError && <Alert type="error" message={submitError} showIcon style={{ marginBottom: 16 }} />}
+
+            <Form.Item>
+              <Space>
+                <Button type="primary" htmlType="submit" loading={submitting} size="large">
+                  发布
+                </Button>
+                <Button onClick={() => navigate(-1)}>取消</Button>
+              </Space>
+            </Form.Item>
+          </Form>
+        </Card>
+      </Content>
+    </Layout>
   )
 }
 
 export default Submit
-
-

@@ -22,7 +22,7 @@
 * JSON 字段使用 `snake_case`
 * 资源 ID 建议保留前缀（例如 `u_1`、`b_1`、`p_1`、`c_1`、`f_1`、`r_1`）
 * 时间统一使用 ISO 8601（RFC3339），例如 `2025-01-01T00:00:00Z`
-* ????????? UTC+8?????????
+* 时区统一使用 UTC+8（北京时间）或 UTC，前端展示时转为本地时间
 * 使用 HTTP 状态码 + 统一错误结构
 * 认证方式：Bearer Token
 
@@ -240,6 +240,8 @@
   "board_id": "b_1",
   "title": "string",
   "content": "string",
+  "content_json": { "type": "doc", "content": [] },
+  "tags": ["tag1", "tag2"],
   "attachments": ["f_1", "f_2"]
 }
 ```
@@ -247,6 +249,7 @@
 说明：
 
 - `board_id` 必须是存在的版块，否则返回 `400` + `{ "code": 2001, "message": "invalid board_id" }`。
+- `content_json` 为 TipTap JSON 格式。
 - `attachments` 可选，元素为 `/api/v1/files` 返回的文件 ID，最多 6 个。
 - `content` 为空时需至少上传 1 个附件。
 
@@ -259,6 +262,7 @@
   "author_id": "u_123",
   "title": "string",
   "content": "string",
+  "content_json": {},
   "attachments": [
     { "id": "f_1", "filename": "photo.jpg", "url": "/files/f_1", "width": 1920, "height": 1080 }
   ],
@@ -288,6 +292,7 @@
   "author": { "id": "u_123", "nickname": "alice" },
   "title": "string",
   "content": "string",
+  "content_json": {},
   "attachments": [
     { "id": "f_1", "filename": "photo.jpg", "url": "/files/f_1", "width": 1920, "height": 1080 }
   ],
@@ -335,6 +340,7 @@
     "parent_id": null,
     "author": { "id": "u_123", "nickname": "alice" },
     "content": "string",
+    "content_json": {},
     "attachments": [
       { "id": "f_1", "filename": "photo.jpg", "url": "/files/f_1", "width": 1920, "height": 1080 }
     ],
@@ -364,6 +370,7 @@
 ```json
 {
   "content": "string",
+  "content_json": { "type": "doc", "content": [] },
   "parent_id": "c_0",
   "attachments": ["f_1"]
 }
@@ -378,6 +385,7 @@
   "parent_id": "c_0",
   "author_id": "u_123",
   "content": "string",
+  "content_json": {},
   "attachments": [
     { "id": "f_1", "filename": "photo.jpg", "url": "/files/f_1", "width": 1920, "height": 1080 }
   ],
@@ -647,70 +655,47 @@
 
 ---
 
-## 13. ????????????
+## 13. 图片上传与富文本
 
-### 13.1 ????????
+### 13.1 内联图片上传
 
 `POST /api/uploads/images`
 
-??????Bearer Token?
+鉴权：需要（Bearer Token）
 
-???
+请求：
 - `multipart/form-data`
-- ????`file`
+- 字段名：`file`
 
-???
-- ??? `image/*`
-- ???? 100MB
+限制：
+- 类型：`image/*`
+- 大小：单文件 100MB
 
-???
+响应：
 
 ```json
 { "url": "/files/f_123", "width": 1024, "height": 768 }
 ```
 
-???
-- `url` ????? `content_json` ? image ??? `src`
+说明：
+- `url` 用于替换前端富文本编辑器中临时节点的 `src` 属性
 
-### 13.2 ??????
+### 13.2 发帖（富文本支持）
 
 `POST /api/v1/posts`
 
-????????/?????
-- `content_json`???? JSON?TipTap?
-- `tags`?`string[]`
-- `content`????????????????/?????
+请求体增加字段：
+- `content_json`：TipTap 编辑器生成的 JSON 结构
+- `tags`：`string[]` 标签列表
+- `content`：纯文本内容（用于搜索索引或降级显示）
 
-?????
-- ? `content` / `content_json` / `attachments` ???????? `400` + `{ "code": 2001, "message": "invalid content" }`
+校验：
+- 若 `content` / `content_json` / `attachments` 全为空，则返回 `400` + `{ "code": 2001, "message": "invalid content" }`
 
-???
-
-```json
-{
-  "board_id": "b_1",
-  "title": "string",
-  "content": "plain text",
-  "content_json": { "type": "doc", "content": [] },
-  "tags": ["tag1", "tag2"]
-}
-```
-
-### 13.3 ??????
+### 13.3 评论（富文本支持）
 
 `POST /api/v1/posts/{post_id}/comments`
 
-????????/?????
-- `content_json`???? JSON?TipTap?
-- `tags`?`string[]`
-- `content`??????
-
-???
-
-```json
-{
-  "content": "plain text",
-  "content_json": { "type": "doc", "content": [] },
-  "tags": ["tag1"]
-}
-```
+请求体增加字段：
+- `content_json`：TipTap JSON
+- `tags`：`string[]`

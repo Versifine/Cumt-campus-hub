@@ -1,17 +1,33 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
+import { 
+  Layout, 
+  Card, 
+  Descriptions, 
+  Avatar, 
+  Tabs, 
+  Button, 
+  Space, 
+  Row, 
+  Col, 
+  Statistic,
+  Empty,
+  Typography,
+  theme
+} from 'antd'
+import { UserOutlined, ArrowLeftOutlined } from '@ant-design/icons'
 import { fetchPosts, type PostItem } from '../api/posts'
 import { fetchCurrentUser } from '../api/users'
 import { getErrorMessage } from '../api/client'
 import PostCard from '../components/PostCard'
-import ProfileHeader from '../components/profile/ProfileHeader'
-import ProfileStats from '../components/profile/ProfileStats'
-import ProfileTabs from '../components/profile/ProfileTabs'
 import SiteHeader from '../components/SiteHeader'
 import { ErrorState } from '../components/StateBlocks'
 import { PostSkeletonList } from '../components/Skeletons'
 import { useAuth } from '../context/AuthContext'
 import { formatRelativeTimeUTC8 } from '../utils/time'
+
+const { Content } = Layout
+const { Title, Paragraph } = Typography
 
 type LoadState<T> = {
   data: T
@@ -30,15 +46,11 @@ type ProfileData = {
   followingCount?: number | null
 }
 
-const tabs = [
-  { id: 'posts', label: '帖子 Posts' },
-  { id: 'comments', label: '评论 Comments' },
-]
-
 const UserProfile = () => {
   const { id } = useParams()
   const navigate = useNavigate()
   const { user } = useAuth()
+  const { token } = theme.useToken()
   const [activeTab, setActiveTab] = useState('posts')
   const [profileState, setProfileState] = useState<LoadState<ProfileData | null>>({
     data: null,
@@ -53,30 +65,13 @@ const UserProfile = () => {
 
   const isSelf = Boolean(user && id && user.id === id)
 
-  const handleBack = () => {
-    if (window.history.length > 1) {
-      navigate(-1)
-    } else {
-      navigate('/')
-    }
-  }
-
   const loadProfile = useCallback(async () => {
-    if (!id) {
-      setProfileState({
-        data: null,
-        loading: false,
-        error: '无效的用户ID / Invalid user ID',
-      })
-      setPostsState({ data: [], loading: false, error: null })
-      return
-    }
+    if (!id) return
+    setProfileState(prev => ({ ...prev, loading: true }))
+    setPostsState(prev => ({ ...prev, loading: true }))
 
-    setProfileState((prev) => ({ ...prev, loading: true, error: null }))
-    setPostsState((prev) => ({ ...prev, loading: true, error: null }))
-
+    let nickname = `User ${id}`
     let createdAt: string | null = null
-    let nickname = `用户 ${id}`
 
     if (isSelf && user?.nickname) {
       nickname = user.nickname
@@ -87,24 +82,18 @@ const UserProfile = () => {
         const me = await fetchCurrentUser()
         createdAt = me.created_at
         nickname = me.nickname || nickname
-      } catch {
-        // keep fallback profile data
-      }
+      } catch {}
     }
 
     try {
       const posts = await fetchPosts(1, 20)
       const filtered = posts.items.filter((post) => String(post.author.id) === id)
-      if (filtered.length > 0) {
+      if (filtered.length > 0 && !isSelf) {
         nickname = filtered[0].author.nickname || nickname
       }
       setPostsState({ data: filtered, loading: false, error: null })
     } catch (error) {
-      setPostsState({
-        data: [],
-        loading: false,
-        error: getErrorMessage(error),
-      })
+      setPostsState({ data: [], loading: false, error: getErrorMessage(error) })
     }
 
     setProfileState({
@@ -115,8 +104,8 @@ const UserProfile = () => {
         bio: null,
         avatarUrl: null,
         coverUrl: null,
-        followersCount: null,
-        followingCount: null,
+        followersCount: 0,
+        followingCount: 0,
       },
       loading: false,
       error: null,
@@ -124,104 +113,127 @@ const UserProfile = () => {
   }, [id, isSelf, user?.nickname])
 
   useEffect(() => {
-    void loadProfile()
+    loadProfile()
   }, [loadProfile])
 
   const statsPosts = useMemo(() => postsState.data.length, [postsState.data.length])
 
   return (
-    <div className="app-shell">
+    <Layout style={{ minHeight: '100vh', background: 'transparent' }}>
       <SiteHeader />
-      <main className="profile-page page-enter">
-        <button type="button" className="back-link" onClick={handleBack}>
-          ← 返回 Back
-        </button>
+      <Content style={{ maxWidth: 1000, margin: '24px auto', width: '100%', padding: '0 24px' }}>
+        <Button 
+          type="text" 
+          icon={<ArrowLeftOutlined />} 
+          onClick={() => navigate(-1)} 
+          style={{ marginBottom: 16 }}
+        >
+          Back
+        </Button>
 
         {profileState.loading ? (
-          <div className="profile-skeleton">
-            <div className="profile-skeleton__cover" />
-            <div className="profile-skeleton__body">
-              <div className="skeleton-line skeleton-line--wide" />
-              <div className="skeleton-line" />
-              <div className="profile-skeleton__stats">
-                <div className="skeleton-line skeleton-line--short" />
-                <div className="skeleton-line skeleton-line--short" />
-              </div>
-            </div>
-          </div>
+           <Card loading />
         ) : profileState.error ? (
-          <ErrorState message={profileState.error} onRetry={loadProfile} />
-        ) : profileState.data ? (
-          <>
-            <ProfileHeader
-              nickname={profileState.data.nickname}
-              bio={profileState.data.bio}
-              avatarUrl={profileState.data.avatarUrl}
-              coverUrl={profileState.data.coverUrl}
-            />
+           <ErrorState message={profileState.error} onRetry={loadProfile} />
+        ) : profileState.data && (
+          <Space direction="vertical" size="large" style={{ width: '100%' }}>
+            {/* Header Card */}
+            <Card 
+              style={{ overflow: 'hidden', borderRadius: 12, border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.05)' }}
+              bodyStyle={{ padding: 0 }}
+            >
+              <div style={{ height: 160, background: 'linear-gradient(120deg, #f6d365 0%, #fda085 100%)' }} />
+              <div style={{ padding: '0 24px 24px', position: 'relative' }}>
+                <div style={{ marginTop: -48, marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+                  <Avatar 
+                    size={96} 
+                    src={profileState.data.avatarUrl} 
+                    icon={<UserOutlined />} 
+                    style={{ 
+                      backgroundColor: token.colorPrimary,
+                      border: '4px solid #fff' 
+                    }}
+                  />
+                  <Space>
+                    {isSelf ? (
+                      <Button>Edit Profile</Button>
+                    ) : (
+                      <>
+                        <Button type="primary">Follow</Button>
+                        <Button>Message</Button>
+                      </>
+                    )}
+                  </Space>
+                </div>
+                
+                <Title level={2} style={{ marginBottom: 4 }}>{profileState.data.nickname}</Title>
+                <Paragraph type="secondary" style={{ maxWidth: 600 }}>
+                  {profileState.data.bio || 'This user has not written a bio yet.'}
+                </Paragraph>
 
-            <section className="profile-card">
-              <div className="profile-card__row">
-                <span className="profile-card__label">用户ID / User ID</span>
-                <span className="profile-card__value">{profileState.data.id}</span>
+                <Descriptions column={{ xs: 1, sm: 2, md: 3 }} style={{ marginTop: 24 }}>
+                  <Descriptions.Item label="User ID">{profileState.data.id}</Descriptions.Item>
+                  <Descriptions.Item label="Joined">{profileState.data.createdAt ? formatRelativeTimeUTC8(profileState.data.createdAt) : 'Unknown'}</Descriptions.Item>
+                </Descriptions>
+
+                <Row gutter={32} style={{ marginTop: 16 }}>
+                  <Col>
+                    <Statistic title="Posts" value={statsPosts} />
+                  </Col>
+                  <Col>
+                    <Statistic title="Followers" value={profileState.data.followersCount || 0} />
+                  </Col>
+                  <Col>
+                    <Statistic title="Following" value={profileState.data.followingCount || 0} />
+                  </Col>
+                </Row>
               </div>
-              <div className="profile-card__row">
-                <span className="profile-card__label">注册时间 / Joined</span>
-                <span className="profile-card__value">
-                  {profileState.data.createdAt
-                    ? formatRelativeTimeUTC8(profileState.data.createdAt)
-                    : '—'}
-                </span>
-              </div>
-              <ProfileStats
-                posts={statsPosts}
-                comments={null}
-                followers={profileState.data.followersCount}
-                following={profileState.data.followingCount}
+            </Card>
+
+            {/* Content Tabs */}
+            <Card 
+              bordered={false} 
+              style={{ borderRadius: 12, boxShadow: '0 4px 12px rgba(0,0,0,0.05)' }}
+              bodyStyle={{ padding: '0 24px 24px' }}
+            >
+              <Tabs
+                activeKey={activeTab}
+                onChange={setActiveTab}
+                size="large"
+                items={[
+                  {
+                    label: `Posts (${statsPosts})`,
+                    key: 'posts',
+                    children: (
+                       <div style={{ paddingTop: 16 }}>
+                         {postsState.loading ? (
+                           <PostSkeletonList count={3} />
+                         ) : postsState.error ? (
+                           <ErrorState message={postsState.error} onRetry={loadProfile} />
+                         ) : postsState.data.length === 0 ? (
+                           <Empty description="No posts yet" />
+                         ) : (
+                           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                             {postsState.data.map(post => (
+                               <PostCard key={post.id} post={post} />
+                             ))}
+                           </div>
+                         )}
+                       </div>
+                    )
+                  },
+                  {
+                    label: 'Comments',
+                    key: 'comments',
+                    children: <Empty description="Comments coming soon" image={Empty.PRESENTED_IMAGE_SIMPLE} style={{ padding: 40 }} />
+                  }
+                ]}
               />
-              <div className="profile-actions">
-                {isSelf ? (
-                  <button type="button" className="btn btn-ghost" disabled>
-                    编辑资料 Edit
-                  </button>
-                ) : (
-                  <>
-                    <button type="button" className="btn btn-ghost" disabled>
-                      关注 Follow
-                    </button>
-                    <button type="button" className="btn btn-ghost" disabled>
-                      私信 Message
-                    </button>
-                  </>
-                )}
-              </div>
-            </section>
-
-            <ProfileTabs tabs={tabs} activeTab={activeTab} onChange={setActiveTab} />
-
-            <section className="profile-content">
-              {activeTab === 'posts' ? (
-                postsState.loading ? (
-                  <PostSkeletonList count={3} />
-                ) : postsState.error ? (
-                  <ErrorState message={postsState.error} onRetry={loadProfile} />
-                ) : postsState.data.length === 0 ? (
-                  <div className="page-status">TA 还没有发过帖子 / No posts yet</div>
-                ) : (
-                  <div className="post-list">
-                    {postsState.data.map((post) => (
-                      <PostCard key={post.id} post={post} />
-                    ))}
-                  </div>
-                )
-              ) : (
-                <div className="page-status">评论功能建设中 / Comments coming soon</div>
-              )}
-            </section>
-          </>
-        ) : null}
-      </main>
-    </div>
+            </Card>
+          </Space>
+        )}
+      </Content>
+    </Layout>
   )
 }
 

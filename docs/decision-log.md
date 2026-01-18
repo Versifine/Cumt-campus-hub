@@ -181,14 +181,15 @@ WebSocket 通信采用 **统一事件信封格式**，包含版本号与事件�
 - 前端需要先注册再登录（见 `apps/web`）
 - SQLite 数据库新增 `accounts.password_hash` 字段；老数据库里已有账号但没有密码时，允许通过注册补齐密码后继续使用
 
-## DL-008 Web 前端技术栈：React 19 + TypeScript + Vite
+## DL-008 Web 前端技术栈：React 19 + TypeScript + Vite + Ant Design
 
-* **状态**：Accepted（已更新）
-* **日期**：2025-12（更新于 2026-01）
+* **状态**：Accepted（更新于 2026-01）
+* **日期**：2025-12
 
 ### 决策
 
 - Web 前端统一使用：React 19 + TypeScript + Vite
+- **UI 组件库**：迁移至 **Ant Design** (此前为 Naive UI / 自定义 CSS)
 - 富文本编辑器使用 TipTap（基于 ProseMirror）
 - `apps/web` 作为前端工程目录
 
@@ -197,19 +198,14 @@ WebSocket 通信采用 **统一事件信封格式**，包含版本号与事件�
 - React 生态成熟，社区资源丰富
 - TypeScript 提升可维护性
 - Vite 启动/热更新快，开发体验好
+- Ant Design 企业级组件丰富，开箱即用，极大提升开发效率
 - TipTap 富文本编辑器功能强大，扩展性好
 
 ### 影响
 
 - 开发阶段使用 Vite Dev Server（端口 5173，代理转发到 Go 后端 8080）
 - 生产构建输出为静态资源（`dist/`），可由 Go/Nginx/CDN 提供
-
-### 变更说明
-
-原计划使用 Vue 3 + Naive UI，实际开发中选择了 React，原因：
-
-- 开发者对 React 更熟悉
-- React 19 新特性（如 use hook）更适合项目需求
+- 移除了大量自定义 CSS，改为使用 Antd 的 Design Token
 
 ---
 
@@ -350,3 +346,56 @@ WebSocket 通信采用 **统一事件信封格式**，包含版本号与事件�
 - TODO：新增关注关系接口与分页列表（following/followers）。
 - TODO：用户资料需返回 following_count / followers_count 以支持展示。
 
+---
+
+## DL-015 图片显示策略（Reddit 风格）
+
+* **状态**：Accepted
+* **日期**：2026-01
+
+### 决策
+
+采用分场景的图片显示策略：
+
+1. **帖子内容图片**（RichContent）：
+   - 使用 Antd `<Image.PreviewGroup>`：默认展示缩略图，点击全屏预览。
+   - 使用 `<Spin>` 展示上传状态。
+
+2. **评论区图片**（RichContent variant="comment"）：
+   - 小图片保持原始大小，左对齐。
+   - 大图片限制最大高度 512px。
+
+### 原因
+
+- 适配 Ant Design 组件库的交互模式。
+- 统一全站的图片预览体验。
+
+### 影响
+
+- 移除了自定义的 `AdaptiveImage` 组件，转而使用 Antd `Image`。
+- 简化了 CSS，依赖组件库的内置样式。
+
+---
+
+## DL-016 数据库向后兼容迁移策略
+
+* **状态**：Accepted
+* **日期**：2026-01
+
+### 决策
+
+- 数据库迁移采用向后兼容策略：新增列使用 `ALTER TABLE ADD COLUMN`
+- 使用 `isSQLiteDuplicateColumnError` 函数忽略列已存在的错误
+- 迁移语句放在 `migrate()` 函数末尾，与表创建语句分离
+
+### 原因
+
+- `CREATE TABLE IF NOT EXISTS` 不会更新已有表结构
+- 直接 ALTER TABLE 在列已存在时会报错
+- 需要同时支持新数据库创建和旧数据库升级
+
+### 影响
+
+- files 表新增 `width` 和 `height` 列的迁移已添加
+- 未来新增字段需遵循同样模式
+- 所有迁移语句需幂等（可重复执行）
