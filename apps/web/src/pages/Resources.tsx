@@ -1,130 +1,135 @@
-﻿import { useState, type FormEvent } from 'react'
-import SectionCard from '../components/SectionCard'
+import { useState, type FormEvent } from 'react'
+import { 
+  Layout, 
+  Card, 
+  Upload, 
+  Button, 
+  List, 
+  Typography, 
+  message, 
+  Space,
+  Empty
+} from 'antd'
+import { 
+  InboxOutlined, 
+  FileTextOutlined, 
+  LinkOutlined, 
+  DownloadOutlined 
+} from '@ant-design/icons'
 import SiteHeader from '../components/SiteHeader'
 import { uploadFile, type UploadResponse } from '../api/files'
 import { getErrorMessage } from '../api/client'
 import { formatRelativeTimeUTC8 } from '../utils/time'
+
+const { Content } = Layout
+const { Dragger } = Upload
+const { Title, Text, Paragraph } = Typography
 
 type UploadItem = UploadResponse & {
   createdAt: string
 }
 
 const Resources = () => {
-  const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [uploads, setUploads] = useState<UploadItem[]>([])
   const [uploading, setUploading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [notice, setNotice] = useState<string | null>(null)
-  const [copiedId, setCopiedId] = useState<string | null>(null)
-  const [inputKey, setInputKey] = useState(0)
 
-  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    setError(null)
-    setNotice(null)
-
-    if (!selectedFile) {
-      setError('请选择一个要上传的文件')
-      return
-    }
-
+  const handleUpload = async (options: any) => {
+    const { file, onSuccess, onError } = options
     setUploading(true)
-
     try {
-      const result = await uploadFile(selectedFile)
+      const result = await uploadFile(file)
       const item: UploadItem = {
         ...result,
         createdAt: new Date().toISOString(),
       }
-      setUploads((prev) => [item, ...prev])
-      setNotice('上传成功，已生成下载链接。')
-      setSelectedFile(null)
-      setInputKey((prev) => prev + 1)
-    } catch (uploadError) {
-      setError(getErrorMessage(uploadError))
+      setUploads(prev => [item, ...prev])
+      message.success('上传成功')
+      onSuccess(result)
+    } catch (err) {
+      const msg = getErrorMessage(err)
+      message.error(msg)
+      onError(new Error(msg))
     } finally {
       setUploading(false)
     }
   }
 
-  const handleCopy = async (item: UploadItem) => {
-    const fullUrl = new URL(item.url, window.location.origin).toString()
-
+  const handleCopy = async (url: string) => {
+    const fullUrl = new URL(url, window.location.origin).toString()
     try {
       await navigator.clipboard.writeText(fullUrl)
-      setCopiedId(item.id)
-      setNotice('链接已复制到剪贴板')
-      setTimeout(() => setCopiedId(null), 2000)
+      message.success('链接已复制')
     } catch {
-      setError('复制失败，请手动复制链接')
+      message.error('复制失败')
     }
   }
 
   return (
-    <div className="app-shell">
+    <Layout style={{ minHeight: '100vh', background: 'transparent' }}>
       <SiteHeader />
-      <main className="resources-page page-enter">
-        <div className="resources-grid">
-          <SectionCard title="Upload Resource">
-            <form className="resource-upload" onSubmit={handleSubmit}>
-              <label className="form-field">
-                <span className="form-label">选择文件</span>
-                <input
-                  key={inputKey}
-                  className="form-input"
-                  type="file"
-                  onChange={(event) => setSelectedFile(event.target.files?.[0] ?? null)}
-                />
-              </label>
-              <div className="resource-note">
+      <Content style={{ maxWidth: 1000, margin: '24px auto', width: '100%', padding: '0 24px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24 }}>
+          {/* Upload Area */}
+          <Card title="上传资源" bordered={false} style={{ height: 'fit-content' }}>
+            <Dragger
+              customRequest={handleUpload}
+              showUploadList={false}
+              disabled={uploading}
+              style={{ padding: 32 }}
+            >
+              <p className="ant-upload-drag-icon">
+                <InboxOutlined />
+              </p>
+              <p className="ant-upload-text">点击或拖拽文件到此区域上传</p>
+              <p className="ant-upload-hint">
                 建议上传课件、复习资料或工具文档。单次上传上限 10MB。
-              </div>
+              </p>
+            </Dragger>
+          </Card>
 
-              {notice ? <div className="form-note">{notice}</div> : null}
-              {error ? <div className="form-error">{error}</div> : null}
-
-              <button type="submit" className="btn btn-primary" disabled={uploading}>
-                {uploading ? '上传中...' : '上传资源'}
-              </button>
-            </form>
-          </SectionCard>
-
-          <SectionCard title="Recent Uploads">
-            <div className="resource-list">
-              {uploads.length === 0 ? (
-                <div className="page-status">暂无上传记录。</div>
-              ) : (
-                uploads.map((item) => (
-                  <div key={item.id} className="resource-item">
-                    <div className="resource-item__name">{item.filename}</div>
-                    <div className="resource-item__meta">
-                      {formatRelativeTimeUTC8(item.createdAt)}
-                    </div>
-                    <div className="resource-actions">
-                      <a
-                        className="btn btn-ghost btn-small"
-                        href={item.url}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        打开
-                      </a>
-                      <button
-                        type="button"
-                        className="btn btn-ghost btn-small"
-                        onClick={() => handleCopy(item)}
-                      >
-                        {copiedId === item.id ? '已复制' : '复制链接'}
-                      </button>
-                    </div>
-                  </div>
-                ))
+          {/* Recent Uploads */}
+          <Card title="最近上传" bordered={false}>
+            <List
+              dataSource={uploads}
+              locale={{ emptyText: <Empty description="暂无上传记录" image={Empty.PRESENTED_IMAGE_SIMPLE} /> }}
+              renderItem={item => (
+                <List.Item
+                  actions={[
+                    <Button 
+                      key="open" 
+                      type="text" 
+                      icon={<DownloadOutlined />} 
+                      href={item.url} 
+                      target="_blank"
+                    >
+                      打开
+                    </Button>,
+                    <Button 
+                      key="copy" 
+                      type="text" 
+                      icon={<LinkOutlined />} 
+                      onClick={() => handleCopy(item.url)}
+                    >
+                      复制链接
+                    </Button>
+                  ]}
+                >
+                  <List.Item.Meta
+                    avatar={<FileTextOutlined style={{ fontSize: 24, color: '#1890ff' }} />}
+                    title={
+                      <Text ellipsis style={{ maxWidth: 200 }} title={item.filename}>
+                        {item.filename}
+                      </Text>
+                    }
+                    description={formatRelativeTimeUTC8(item.createdAt)}
+                  />
+                </List.Item>
               )}
-            </div>
-          </SectionCard>
+            />
+          </Card>
         </div>
-      </main>
-    </div>
+      </Content>
+    </Layout>
   )
 }
 

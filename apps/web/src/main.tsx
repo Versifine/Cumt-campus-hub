@@ -1,6 +1,7 @@
-﻿import { StrictMode } from 'react'
+import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { RouterProvider } from 'react-router-dom'
+import { ConfigProvider, App } from 'antd'
 import './index.css'
 import { AuthProvider } from './context/AuthContext'
 import router from './router'
@@ -35,8 +36,20 @@ attachAuthListener()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <AuthProvider>
-      <RouterProvider router={router} />
-    </AuthProvider>
+    <ConfigProvider
+      theme={{
+        token: {
+          colorPrimary: '#c55f24',
+          borderRadius: 8,
+          fontFamily: "'Space Grotesk', 'Noto Sans SC', sans-serif",
+        },
+      }}
+    >
+      <App>
+        <AuthProvider>
+          <RouterProvider router={router} />
+        </AuthProvider>
+      </App>
+    </ConfigProvider>
   </StrictMode>,
 )

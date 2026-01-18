@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { Layout, Row, Col, Typography, Button, Tag, Space, theme } from 'antd'
 import { fetchBoards } from '../api/boards'
 import { getErrorMessage } from '../api/client'
 import { fetchPosts } from '../api/posts'
@@ -12,6 +13,9 @@ import { BoardSkeletonList, PostSkeletonList } from '../components/Skeletons'
 import type { Board } from '../api/boards'
 import type { PostItem } from '../api/posts'
 
+const { Content, Sider } = Layout
+const { Title, Text } = Typography
+
 type LoadState<T> = {
   data: T
   loading: boolean
@@ -19,6 +23,7 @@ type LoadState<T> = {
 }
 
 const Home = () => {
+  const { token } = theme.useToken()
   const [boardsState, setBoardsState] = useState<LoadState<Board[]>>({
     data: [],
     loading: true,
@@ -70,90 +75,110 @@ const Home = () => {
     (board) => board.id === activeBoardId,
   )
 
-  return (
-    <div className="app-shell">
-      <SiteHeader />
-      <div className="layout">
-        <aside className="sidebar sidebar-left">
-          <SectionCard title="Boards">
-            {boardsState.loading ? (
-              <BoardSkeletonList count={5} />
-            ) : boardsState.error ? (
-              <ErrorState message={boardsState.error} onRetry={loadBoards} />
-            ) : boardsState.data.length === 0 ? (
-              <EmptyState
-                title="No boards yet"
-                description="Once boards are created, they will show up here."
-              />
-            ) : (
-              <BoardList
-                boards={boardsState.data}
-                activeBoardId={activeBoardId}
-                onSelect={setActiveBoardId}
-              />
-            )}
-          </SectionCard>
-        </aside>
-
-        <main className="feed" aria-live="polite">
-          <SectionCard
-            title={activeBoard ? 'Board Posts' : 'Latest Posts'}
-            actions={
-              <div className="filter-pill">
-                <span>{activeBoard ? activeBoard.name : 'All Boards'}</span>
-                {activeBoard ? (
-                  <button
-                    type="button"
-                    className="filter-clear"
-                    onClick={() => setActiveBoardId(null)}
-                  >
-                    Clear
-                  </button>
-                ) : null}
-              </div>
-            }
+  const renderFeedHeader = () => (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+      <Space>
+        <Tag color={activeBoard ? 'geekblue' : 'orange'} style={{ fontSize: '0.9rem', padding: '4px 10px' }}>
+          {activeBoard ? activeBoard.name : 'All Boards'}
+        </Tag>
+        {activeBoard && (
+          <Button 
+            type="link" 
+            size="small" 
+            onClick={() => setActiveBoardId(null)}
+            style={{ padding: 0 }}
           >
-            {postsState.loading ? (
-              <PostSkeletonList count={4} />
-            ) : postsState.error ? (
-              <ErrorState message={postsState.error} onRetry={loadPosts} />
-            ) : postsState.data.length === 0 ? (
-              <EmptyState
-                title="No posts yet"
-                description={
-                  activeBoard
-                    ? 'This board has no posts yet.'
-                    : 'Be the first to start a discussion.'
-                }
-                action={
-                  <Link className="retry-button" to="/post/demo">
-                    查看示例帖子
-                  </Link>
-                }
-              />
-            ) : (
-              <div className="post-list">
-                {postsState.data.map((post) => (
-                  <PostCard key={post.id} post={post} />
-                ))}
-              </div>
-            )}
-          </SectionCard>
-        </main>
-
-        <aside className="sidebar sidebar-right">
-          <SectionCard title="Bulletin">
-            <div className="bulletin">
-              <div className="bulletin__title">Campus Updates</div>
-              <p className="bulletin__text">
-                Weekly highlights and campus-wide notices will appear here.
-              </p>
-              <div className="bulletin__hint">Stay tuned for more.</div>
-            </div>
-          </SectionCard>
-        </aside>
-      </div>
+            View All
+          </Button>
+        )}
+      </Space>
     </div>
+  )
+
+  return (
+    <Layout style={{ minHeight: '100vh', background: 'transparent' }}>
+      <SiteHeader />
+      
+      <Content style={{ 
+        maxWidth: 1280, 
+        margin: '24px auto', 
+        width: '100%', 
+        padding: '0 24px' 
+      }}>
+        <Row gutter={24}>
+          {/* Left Sidebar: Boards */}
+          <Col xs={0} md={6} lg={5}>
+            <SectionCard title="Boards" style={{ position: 'sticky', top: 88 }}>
+              {boardsState.loading ? (
+                <BoardSkeletonList count={5} />
+              ) : boardsState.error ? (
+                <ErrorState message={boardsState.error} onRetry={loadBoards} />
+              ) : boardsState.data.length === 0 ? (
+                <EmptyState
+                  title="No boards"
+                  description="No boards available."
+                />
+              ) : (
+                <BoardList
+                  boards={boardsState.data}
+                  activeBoardId={activeBoardId}
+                  onSelect={setActiveBoardId}
+                />
+              )}
+            </SectionCard>
+          </Col>
+
+          {/* Main Feed */}
+          <Col xs={24} md={18} lg={13}>
+            <SectionCard 
+              title={activeBoard ? 'Board Posts' : 'Latest Posts'}
+              actions={renderFeedHeader()}
+            >
+              {postsState.loading ? (
+                <PostSkeletonList count={4} />
+              ) : postsState.error ? (
+                <ErrorState message={postsState.error} onRetry={loadPosts} />
+              ) : postsState.data.length === 0 ? (
+                <EmptyState
+                  title="No posts yet"
+                  description={
+                    activeBoard
+                      ? 'This board has no posts yet.'
+                      : 'Be the first to start a discussion.'
+                  }
+                  action={
+                    <Button type="primary" href="/post/demo">
+                      查看示例帖子
+                    </Button>
+                  }
+                />
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                  {postsState.data.map((post) => (
+                    <PostCard key={post.id} post={post} />
+                  ))}
+                </div>
+              )}
+            </SectionCard>
+          </Col>
+
+          {/* Right Sidebar: Bulletin */}
+          <Col xs={0} lg={6}>
+            <SectionCard title="Bulletin" style={{ position: 'sticky', top: 88 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <Text strong style={{ fontSize: '1.05rem' }}>Campus Updates</Text>
+                <Text type="secondary">
+                  Weekly highlights and campus-wide notices will appear here.
+                </Text>
+                <Text type="secondary" style={{ fontSize: '0.8rem', marginTop: 8, letterSpacing: '0.1em', textTransform: 'uppercase' }}>
+                  Stay tuned
+                </Text>
+              </div>
+            </SectionCard>
+          </Col>
+        </Row>
+      </Content>
+    </Layout>
   )
 }
 

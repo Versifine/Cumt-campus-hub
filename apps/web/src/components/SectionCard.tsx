@@ -1,3 +1,4 @@
+import { Card } from 'antd'
 import type { ReactNode } from 'react'
 
 type SectionCardProps = {
@@ -5,6 +6,7 @@ type SectionCardProps = {
   children: ReactNode
   actions?: ReactNode
   className?: string
+  loading?: boolean
 }
 
 const SectionCard = ({
@@ -12,17 +14,31 @@ const SectionCard = ({
   children,
   actions,
   className,
+  loading = false,
 }: SectionCardProps) => {
-  const classes = ['section-card', className].filter(Boolean).join(' ')
-
   return (
-    <section className={classes}>
-      <div className="section-card__header">
-        <h2 className="section-card__title">{title}</h2>
-        {actions ? <div className="section-card__actions">{actions}</div> : null}
-      </div>
-      <div className="section-card__content">{children}</div>
-    </section>
+    <Card
+      title={title}
+      extra={actions}
+      className={className}
+      loading={loading}
+      bordered={false}
+      style={{ 
+        borderRadius: 12, 
+        boxShadow: '0 4px 12px rgba(0,0,0,0.05)',
+        background: 'rgba(255,255,255,0.95)' 
+      }}
+      headStyle={{
+        borderBottom: '1px solid rgba(0,0,0,0.06)',
+        fontSize: '0.95rem',
+        textTransform: 'uppercase',
+        letterSpacing: '0.05em',
+        color: 'rgba(0,0,0,0.65)'
+      }}
+      bodyStyle={{ padding: '16px 20px' }}
+    >
+      {children}
+    </Card>
   )
 }
 

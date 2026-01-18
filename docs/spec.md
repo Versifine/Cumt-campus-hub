@@ -42,7 +42,7 @@
 * 后端：Go（REST API + WebSocket）
 * 客户端（阶段性）：
 
-  * Phase A：Web（Vue 3 + TypeScript + Vite + Naive UI，用于验证产品与交互）
+  * Phase A：Web（React 19 + Ant Design + Vite，用于验证产品与交互）
   * Phase C：Kotlin Multiplatform（长期客户端）
 
 ---
@@ -53,16 +53,15 @@
 
 * 注册/登录（账号 + 密码 + token）
 * 用户昵称 / 基础资料
-* 用户主页（Profile v1）：`/u/:id`，展示封面/头像/昵称/签名与发帖列表（评论 Tab 先占位）
+* 用户主页（Profile v1）：`/u/:id`，展示封面/头像/昵称/签名与发帖列表
 * 关注/粉丝（关注列表、粉丝列表与数量统计）
 * 前端匿名展示（非强匿名）
 
 ### 3.2 社区与帖子
 
 * 版块（Boards）
-* 帖子（Posts）
-* 评论（Comments）
-* 楼中楼评论（parent_id）
+* 帖子（Posts）：富文本内容（TipTap），支持图片上传
+* 评论（Comments）：富文本，支持楼中楼（parent_id）
 * 点赞 / 点踩 / 分值（Reactions，需持久化）
 * 评论按钮 + 评论数展示
 * Award（消耗用户资源，规则待后端设计）
@@ -108,8 +107,8 @@
 * author_id
 * title
 * content
-* content_json???? JSON????
-* tags?string[]????
+* content_json（TipTap JSON 结构）
+* tags（string[] 标签）
 * attachments（图片/视频附件 ID 列表，可选）
 * created_at
 * score（分值，默认 0，后端持久化）
@@ -132,8 +131,8 @@
 * parent_id
 * author_id
 * content
-* content_json???? JSON????
-* tags?string[]????
+* content_json（TipTap JSON 结构）
+* tags（string[] 标签）
 * attachments（图片/视频附件 ID 列表，可选）
 * created_at
 * score
@@ -210,7 +209,7 @@ campus-hub/
     main.go
 
   apps/
-    web/   # Vue 3 + TypeScript + Vite + Naive UI
+    web/   # React 19 + Ant Design + Vite
     kmp/   # Phase C
 ```
 
@@ -222,8 +221,8 @@ campus-hub/
 
 * API / WS 协议初版冻结
 * 功能闭环跑通
-* 基础 UI 与交互完成
-* Web 前端技术栈：Vue 3 + TypeScript + Vite + Naive UI
+* 基础 UI 与交互完成（Ant Design）
+* Web 前端技术栈：React 19 + TypeScript + Vite + Ant Design
 
 ### Phase B：工程加固
 
@@ -256,10 +255,10 @@ docs/decision-log.md
 
 ## 9. 项目状态
 
-* 当前状态：Demo 设计阶段
+* 当前状态：Demo 开发阶段
 * 架构状态：可演进（未冻结）
 * 名称状态：campus-hub（暂定）
 
 ---
 
-> 本文档为 **工程级规格文档 v0.1**，允许在 Demo 阶段根据实际情况进行修订，但核心架构与协议需谨慎变更。
+> 本文档为 **工程级规格文档 v0.2**，允许在 Demo 阶段根据实际情况进行修订，但核心架构与协议需谨慎变更。

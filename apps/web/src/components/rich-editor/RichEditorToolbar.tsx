@@ -1,7 +1,17 @@
 import { memo, useCallback, useMemo, useRef, type ChangeEvent, type MouseEvent } from 'react'
 import type { Editor } from '@tiptap/react'
-import { ToolbarButton } from './components/ToolbarButton'
-import { ToolbarGroup } from './components/ToolbarGroup'
+import { Button, Tooltip, Space, theme } from 'antd'
+import {
+  BoldOutlined,
+  ItalicOutlined,
+  StrikethroughOutlined,
+  OrderedListOutlined,
+  UnorderedListOutlined,
+  CodeOutlined,
+  LinkOutlined,
+  PictureOutlined,
+  FontSizeOutlined
+} from '@ant-design/icons'
 
 type ToolbarProps = {
   editor: Editor | null
@@ -11,7 +21,8 @@ type ToolbarProps = {
 
 type ToolbarItem = {
   id: string
-  label: string
+  label?: string
+  icon?: React.ReactNode
   title: string
   command: string
   args?: Record<string, unknown>
@@ -26,52 +37,45 @@ const TOOLBAR_GROUPS: ToolbarGroupConfig[] = [
   {
     id: 'format',
     items: [
-      { id: 'bold', label: 'B', title: 'Bold', command: 'toggleBold' },
-      { id: 'italic', label: 'I', title: 'Italic', command: 'toggleItalic' },
-      { id: 'strike', label: 'S', title: 'Strike', command: 'toggleStrike' },
+      { id: 'bold', icon: <BoldOutlined />, title: 'Bold', command: 'toggleBold' },
+      { id: 'italic', icon: <ItalicOutlined />, title: 'Italic', command: 'toggleItalic' },
+      { id: 'strike', icon: <StrikethroughOutlined />, title: 'Strike', command: 'toggleStrike' },
     ],
   },
   {
     id: 'heading',
     items: [
-      { id: 'heading', label: 'H2', title: 'Heading 2', command: 'toggleHeading', args: { level: 2 } },
-      {
-        id: 'heading',
-        label: 'H3',
-        title: 'Heading 3',
-        command: 'toggleHeading',
-        args: { level: 3 },
-      },
-      { id: 'blockquote', label: 'Quote', title: 'Blockquote', command: 'toggleBlockquote' },
+      { id: 'heading-2', label: 'H2', icon: <FontSizeOutlined />, title: 'Heading 2', command: 'toggleHeading', args: { level: 2 } },
+      { id: 'heading-3', label: 'H3', icon: <FontSizeOutlined style={{ fontSize: '0.8em' }} />, title: 'Heading 3', command: 'toggleHeading', args: { level: 3 } },
+      { id: 'blockquote', label: '""', title: 'Blockquote', command: 'toggleBlockquote' },
     ],
   },
   {
     id: 'list',
     items: [
-      { id: 'bulletList', label: 'UL', title: 'Bullet List', command: 'toggleBulletList' },
-      { id: 'orderedList', label: 'OL', title: 'Ordered List', command: 'toggleOrderedList' },
+      { id: 'bulletList', icon: <UnorderedListOutlined />, title: 'Bullet List', command: 'toggleBulletList' },
+      { id: 'orderedList', icon: <OrderedListOutlined />, title: 'Ordered List', command: 'toggleOrderedList' },
     ],
   },
   {
     id: 'code',
     items: [
-      { id: 'code', label: '</>', title: 'Inline Code', command: 'toggleCode' },
-      { id: 'codeBlock', label: '{ }', title: 'Code Block', command: 'toggleCodeBlock' },
+      { id: 'code', icon: <CodeOutlined />, title: 'Inline Code', command: 'toggleCode' },
+      { id: 'codeBlock', label: '{}', title: 'Code Block', command: 'toggleCodeBlock' },
     ],
   },
 ]
 
 export const RichEditorToolbar = memo(({ editor, disabled, onImageUpload }: ToolbarProps) => {
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const { token } = theme.useToken()
 
-  const handleMouseDown = useCallback((e: MouseEvent<HTMLButtonElement>) => {
+  const handleMouseDown = useCallback((e: MouseEvent) => {
     e.preventDefault()
   }, [])
 
-  // 缓存按钮状态计算
   const buttonStates = useMemo(() => {
     if (!editor) return {}
-
     const states: Record<string, { active: boolean; canToggle: boolean }> = {}
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const can = editor.can() as any
@@ -80,8 +84,12 @@ export const RichEditorToolbar = memo(({ editor, disabled, onImageUpload }: Tool
       for (const item of group.items) {
         const stateKey = item.args ? `${item.id}_${JSON.stringify(item.args)}` : item.id
         const isActive = item.args
-          ? editor.isActive(item.id, item.args)
+          ? editor.isActive(item.command.replace('toggle', '').toLowerCase(), item.args) || editor.isActive(item.id, item.args)
           : editor.isActive(item.id)
+        
+        // Tiptap naming quirks: heading vs toggleHeading. checking active state usually needs node name.
+        // For simplicity, we trust editor.isActive logic which maps 'heading' -> heading node.
+        
         const canToggle = item.args
           ? (can[item.command]?.(item.args) ?? true)
           : (can[item.command]?.() ?? true)
@@ -137,48 +145,70 @@ export const RichEditorToolbar = memo(({ editor, disabled, onImageUpload }: Tool
     [disabled, onImageUpload],
   )
 
+  if (!editor) return null
+
   return (
-    <div className="rich-editor__toolbar">
-      {TOOLBAR_GROUPS.map((group) => (
-        <ToolbarGroup key={group.id}>
+    <div style={{ 
+      padding: '8px 12px', 
+      borderBottom: `1px solid ${token.colorBorderSecondary}`,
+      background: token.colorFillQuaternary,
+      display: 'flex',
+      flexWrap: 'wrap',
+      gap: 8,
+      alignItems: 'center'
+    }}>
+      {TOOLBAR_GROUPS.map((group, groupIdx) => (
+        <Space key={group.id} style={{ marginRight: groupIdx < TOOLBAR_GROUPS.length - 1 ? 8 : 0 }}>
           {group.items.map((item, index) => {
             const stateKey = item.args ? `${item.id}_${JSON.stringify(item.args)}` : item.id
             const state = buttonStates[stateKey]
             return (
-              <ToolbarButton
-                key={`${item.id}-${index}`}
-                label={item.label}
-                title={item.title}
-                active={state?.active ?? false}
-                disabled={disabled || !(state?.canToggle ?? true)}
-                onMouseDown={handleMouseDown}
-                onClick={() => handleCommand(item.command, item.args)}
-              />
+              <Tooltip key={`${item.id}-${index}`} title={item.title}>
+                <Button
+                  type={state?.active ? 'primary' : 'text'}
+                  size="small"
+                  icon={item.icon}
+                  onMouseDown={handleMouseDown}
+                  onClick={() => handleCommand(item.command, item.args)}
+                  disabled={disabled || !(state?.canToggle ?? true)}
+                  style={{ minWidth: 32 }}
+                >
+                  {item.label}
+                </Button>
+              </Tooltip>
             )
           })}
-        </ToolbarGroup>
+          {groupIdx < TOOLBAR_GROUPS.length - 1 && <div style={{ width: 1, height: 16, background: token.colorBorder }} />}
+        </Space>
       ))}
-      <ToolbarGroup>
-        <ToolbarButton
-          label="Link"
-          title="Insert link"
-          active={editor?.isActive('link') ?? false}
-          disabled={disabled}
-          onMouseDown={handleMouseDown}
-          onClick={handleSetLink}
-        />
-        <ToolbarButton
-          label="Image"
-          title="Insert image"
-          className="rich-editor__tool--wide"
-          disabled={disabled || !onImageUpload}
-          onMouseDown={handleMouseDown}
-          onClick={handleImageButton}
-        />
-      </ToolbarGroup>
+
+      <Space>
+        <div style={{ width: 1, height: 16, background: token.colorBorder }} />
+        <Tooltip title="Link">
+          <Button
+            type={editor.isActive('link') ? 'primary' : 'text'}
+            size="small"
+            icon={<LinkOutlined />}
+            onMouseDown={handleMouseDown}
+            onClick={handleSetLink}
+            disabled={disabled}
+          />
+        </Tooltip>
+        <Tooltip title="Image">
+          <Button
+            type="text"
+            size="small"
+            icon={<PictureOutlined />}
+            onMouseDown={handleMouseDown}
+            onClick={handleImageButton}
+            disabled={disabled || !onImageUpload}
+          />
+        </Tooltip>
+      </Space>
+
       <input
         ref={fileInputRef}
-        className="rich-editor__file"
+        style={{ display: 'none' }}
         type="file"
         accept="image/*"
         multiple

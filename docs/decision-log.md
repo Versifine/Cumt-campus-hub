@@ -181,14 +181,15 @@ WebSocket 通信采用 **统一事件信封格式**，包含版本号与事件�
 - 前端需要先注册再登录（见 `apps/web`）
 - SQLite 数据库新增 `accounts.password_hash` 字段；老数据库里已有账号但没有密码时，允许通过注册补齐密码后继续使用
 
-## DL-008 Web 前端技术栈：React 19 + TypeScript + Vite
+## DL-008 Web 前端技术栈：React 19 + TypeScript + Vite + Ant Design
 
-* **状态**：Accepted（已更新）
-* **日期**：2025-12（更新于 2026-01）
+* **状态**：Accepted（更新于 2026-01）
+* **日期**：2025-12
 
 ### 决策
 
 - Web 前端统一使用：React 19 + TypeScript + Vite
+- **UI 组件库**：迁移至 **Ant Design** (此前为 Naive UI / 自定义 CSS)
 - 富文本编辑器使用 TipTap（基于 ProseMirror）
 - `apps/web` 作为前端工程目录
 
@@ -197,19 +198,14 @@ WebSocket 通信采用 **统一事件信封格式**，包含版本号与事件�
 - React 生态成熟，社区资源丰富
 - TypeScript 提升可维护性
 - Vite 启动/热更新快，开发体验好
+- Ant Design 企业级组件丰富，开箱即用，极大提升开发效率
 - TipTap 富文本编辑器功能强大，扩展性好
 
 ### 影响
 
 - 开发阶段使用 Vite Dev Server（端口 5173，代理转发到 Go 后端 8080）
 - 生产构建输出为静态资源（`dist/`），可由 Go/Nginx/CDN 提供
-
-### 变更说明
-
-原计划使用 Vue 3 + Naive UI，实际开发中选择了 React，原因：
-
-- 开发者对 React 更熟悉
-- React 19 新特性（如 use hook）更适合项目需求
+- 移除了大量自定义 CSS，改为使用 Antd 的 Design Token
 
 ---
 
@@ -362,31 +358,22 @@ WebSocket 通信采用 **统一事件信封格式**，包含版本号与事件�
 采用分场景的图片显示策略：
 
 1. **帖子内容图片**（RichContent）：
-   - 使用智能模糊背景：当图片宽度无法填满容器 85% 时，显示模糊背景 + 居中图片
-   - 模糊效果：`filter: blur(20px) brightness(0.8)`
-   - 最大高度限制 512px
+   - 使用 Antd `<Image.PreviewGroup>`：默认展示缩略图，点击全屏预览。
+   - 使用 `<Spin>` 展示上传状态。
 
 2. **评论区图片**（RichContent variant="comment"）：
-   - 不使用模糊背景
-   - 小图片保持原始大小，左对齐
-   - 大图片限制最大高度 300px
-   - 背景透明
-
-3. **媒体网格**（CommentMediaBlock）：
-   - 统一使用 `object-fit: cover` 填充容器
-   - 支持 1/2/3/4+ 图片的自适应网格布局
+   - 小图片保持原始大小，左对齐。
+   - 大图片限制最大高度 512px。
 
 ### 原因
 
-- 帖子内容需要优雅处理各种尺寸的图片，模糊背景避免大片留白
-- 评论区更紧凑，小图无需撑满容器
-- 参考 Reddit 的图片展示体验
+- 适配 Ant Design 组件库的交互模式。
+- 统一全站的图片预览体验。
 
 ### 影响
 
-- RichContent 组件新增 `variant` 属性区分帖子/评论
-- CSS 通过 `.rich-content--comment` 类控制评论样式
-- 图片点击可放大预览（需设置 `data-src` 属性）
+- 移除了自定义的 `AdaptiveImage` 组件，转而使用 Antd `Image`。
+- 简化了 CSS，依赖组件库的内置样式。
 
 ---
 
