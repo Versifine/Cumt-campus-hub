@@ -9,11 +9,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gin-gonic/gin"
+
 	"github.com/Versifine/Cumt-cumpus-hub/server/auth"
 	"github.com/Versifine/Cumt-cumpus-hub/server/chat"
 	"github.com/Versifine/Cumt-cumpus-hub/server/community"
 	"github.com/Versifine/Cumt-cumpus-hub/server/file"
-	"github.com/Versifine/Cumt-cumpus-hub/server/internal/transport"
 	"github.com/Versifine/Cumt-cumpus-hub/server/report"
 	"github.com/Versifine/Cumt-cumpus-hub/server/store"
 )
@@ -66,168 +67,89 @@ func main() {
 	}
 
 	// -----------------------------
-	// 4) 路由注册（http.ServeMux）
+	// 4) 路由注册（Gin）
 	// -----------------------------
-	// 使用标准库 ServeMux 作为路由器（按前缀匹配规则派发请求）。
-	mux := http.NewServeMux()
+	router := gin.New()
+	router.Use(gin.Recovery())
+	router.Use(loggingMiddleware(dataStore))
 
 	// 健康检查接口：用于容器探活/负载均衡健康检查。
 	// 返回 JSON：{"status":"ok"}。
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		transport.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	router.GET("/healthz", func(c *gin.Context) {
+		c.JSON(http.StatusOK, map[string]string{"status": "ok"})
 	})
 
 	// -----------------------------
 	// 5) REST API：认证相关
 	// -----------------------------
-	mux.HandleFunc("/api/v1/auth/register", authService.RegisterHandler)
+	router.POST("/api/v1/auth/register", authService.RegisterHandler)
 
 	// 登录接口：由 authService 提供处理函数。
-	mux.HandleFunc("/api/v1/auth/login", authService.LoginHandler)
+	router.POST("/api/v1/auth/login", authService.LoginHandler)
 
 	// 获取当前登录用户信息（通常依赖鉴权 token/cookie 等）。
-	mux.HandleFunc("/api/v1/users/me", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPatch {
-			authService.UpdateMeHandlerV2(w, r)
-			return
-		}
-		authService.MeHandler(w, r)
-	})
-	mux.HandleFunc("/api/v1/users/", func(w http.ResponseWriter, r *http.Request) {
-		// 路径形式： /api/v1/users/{id} 或 /api/v1/users/{id}/follow
-		suffix := strings.TrimPrefix(r.URL.Path, "/api/v1/users/")
-		parts := strings.Split(strings.Trim(suffix, "/"), "/")
+	router.GET("/api/v1/users/me", authService.GetMe)
+	router.PATCH("/api/v1/users/me", authService.UpdateMe)
 
-		if len(parts) == 0 || parts[0] == "" || parts[0] == "me" {
-			transport.WriteError(w, http.StatusNotFound, 2001, "not found")
-			return
-		}
-
-		userID := parts[0]
-
-		if len(parts) == 2 {
-			switch parts[1] {
-			case "follow":
-				if r.Method == http.MethodPost {
-					authService.FollowHandler(userID)(w, r)
-				} else if r.Method == http.MethodDelete {
-					authService.UnfollowHandler(userID)(w, r)
-				} else {
-					transport.WriteError(w, http.StatusMethodNotAllowed, 2001, "method not allowed")
-				}
-				return
-			case "followers":
-				authService.FollowersHandler(userID)(w, r)
-				return
-			case "following":
-				authService.FollowingHandler(userID)(w, r)
-				return
-			case "comments":
-				authService.UserCommentsHandler(userID)(w, r)
-				return
-			}
-		}
-
-		if len(parts) == 1 {
-			authService.PublicUserHandler(userID)(w, r)
-			return
-		}
-
-		transport.WriteError(w, http.StatusNotFound, 2001, "not found")
-	})
+	router.GET("/api/v1/users/:id", authService.GetUser)
+	router.POST("/api/v1/users/:id/follow", authService.FollowUser)
+	router.DELETE("/api/v1/users/:id/follow", authService.UnfollowUser)
+	router.GET("/api/v1/users/:id/followers", authService.GetFollowers)
+	router.GET("/api/v1/users/:id/following", authService.GetFollowing)
+	router.GET("/api/v1/users/:id/comments", authService.GetUserComments)
 
 	// -----------------------------
 	// 6) REST API：社区相关
 	// -----------------------------
-	// boards 列表/创建等操作（具体取决于 communityHandler.Boards 的实现）。
-	mux.HandleFunc("/api/v1/boards", communityHandler.Boards)
+	// boards 列表/创建等操作（具体取决于 communityHandler 的实现）。
+	router.GET("/api/v1/boards", communityHandler.GetBoards)
 
 	// posts 列表/创建等操作。
-	mux.HandleFunc("/api/v1/posts", communityHandler.Posts)
+	router.GET("/api/v1/posts", communityHandler.ListPosts)
+	router.POST("/api/v1/posts", communityHandler.CreatePost)
 
-	// posts 的子路由处理：
-	// 这里用手写解析的方式支持类似：
-	//   /api/v1/posts/{post_id}/comments
-	// 若不匹配，则返回 404。
-	mux.HandleFunc("/api/v1/posts/", func(w http.ResponseWriter, r *http.Request) {
-		// 去掉固定前缀，剩余部分形如 "{post_id}/comments"
-		trimmed := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/posts/"), "/")
+	router.GET("/api/v1/posts/:id", communityHandler.GetPost)
+	router.DELETE("/api/v1/posts/:id", communityHandler.DeletePost)
 
-		// 按 "/" 切割路径段
-		parts := strings.Split(trimmed, "/")
+	router.POST("/api/v1/posts/:id/votes", communityHandler.VotePost)
+	router.DELETE("/api/v1/posts/:id/votes", communityHandler.ClearPostVote)
 
-		if len(parts) == 1 && parts[0] != "" {
-			communityHandler.Post(parts[0])(w, r)
-			return
-		}
-		if len(parts) == 2 && parts[1] == "votes" {
-			communityHandler.Votes(parts[0])(w, r)
-			return
-		}
-		if len(parts) == 2 && parts[1] == "comments" {
-			communityHandler.Comments(parts[0])(w, r)
-			return
-		}
-		if len(parts) == 4 && parts[1] == "comments" && parts[3] == "votes" {
-			communityHandler.CommentVotes(parts[0], parts[2])(w, r)
-			return
-		}
-		if len(parts) == 3 && parts[1] == "comments" {
-			communityHandler.Comment(parts[0], parts[2])(w, r)
-			return
-		}
+	router.GET("/api/v1/posts/:id/comments", communityHandler.ListComments)
+	router.POST("/api/v1/posts/:id/comments", communityHandler.CreateComment)
+	router.DELETE("/api/v1/posts/:id/comments/:commentId", communityHandler.DeleteComment)
 
-		// 统一错误响应：404 + 业务错误码 2001 + 消息 "not found"
-		transport.WriteError(w, http.StatusNotFound, 2001, "not found")
-	})
+	router.POST("/api/v1/posts/:id/comments/:commentId/votes", communityHandler.VoteComment)
+	router.DELETE("/api/v1/posts/:id/comments/:commentId/votes", communityHandler.ClearCommentVote)
 
 	// -----------------------------
 	// 7) REST API：举报与管理（P0）
 	// -----------------------------
-	mux.HandleFunc("/api/v1/reports", reportHandler.Create)
-	mux.HandleFunc("/api/v1/admin/reports", reportHandler.AdminList)
-	mux.HandleFunc("/api/v1/admin/reports/", func(w http.ResponseWriter, r *http.Request) {
-		reportID := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/admin/reports/"), "/")
-		if reportID == "" {
-			transport.WriteError(w, http.StatusNotFound, 2001, "not found")
-			return
-		}
-		reportHandler.AdminUpdate(reportID)(w, r)
+	router.POST("/api/v1/reports", reportHandler.Create)
+	router.GET("/api/v1/admin/reports", reportHandler.AdminList)
+	router.PATCH("/api/v1/admin/reports/:id", reportHandler.AdminUpdate)
+
+	// -----------------------------
+	// 8) REST API：文件上传/下载
+	// -----------------------------
+	router.POST("/api/v1/files", fileHandler.Upload)
+	router.POST("/api/uploads/images", fileHandler.UploadImage)
+	router.GET("/files/:id", fileHandler.Download)
+
+	// -----------------------------
+	// 9) WebSocket：聊天
+	// -----------------------------
+	router.GET("/ws/chat", chatHandler.ServeWS)
+
+	// -----------------------------
+	// 10) 静态资源：前端页面
+	// -----------------------------
+	fileServer := http.FileServer(http.Dir("apps/web"))
+	router.NoRoute(func(c *gin.Context) {
+		fileServer.ServeHTTP(c.Writer, c.Request)
 	})
 
 	// -----------------------------
-	// 7) REST API：文件上传/下载
-	// -----------------------------
-	// 上传接口：例如接收 multipart/form-data 或其他格式（取决于实现）。
-	mux.HandleFunc("/api/v1/files", fileHandler.Upload)
-	mux.HandleFunc("/api/uploads/images", fileHandler.UploadImage)
-
-	// 下载接口：通过 /files/{file_id} 访问。
-	// 注意这里是前缀匹配，因此需要手动解析 file_id。
-	mux.HandleFunc("/files/", func(w http.ResponseWriter, r *http.Request) {
-		// 从路径中取出 file_id
-		fileID := strings.TrimPrefix(r.URL.Path, "/files/")
-
-		// fileHandler.Download(fileID) 返回一个 handler，再执行。
-		fileHandler.Download(fileID)(w, r)
-	})
-
-	// -----------------------------
-	// 8) WebSocket：聊天
-	// -----------------------------
-	// WebSocket 入口：/ws/chat
-	mux.HandleFunc("/ws/chat", chatHandler.ServeWS)
-
-	// -----------------------------
-	// 9) 静态资源：前端页面
-	// -----------------------------
-	// 将根路径 "/" 交给静态文件服务器：
-	// - apps/web 目录下的文件会被作为静态资源提供（例如 index.html、js、css）。
-	// - 注意：ServeMux 的匹配规则里 "/" 会兜底匹配未被更具体路由命中的请求。
-	mux.Handle("/", http.FileServer(http.Dir("apps/web")))
-
-	// -----------------------------
-	// 10) 服务监听地址配置
+	// 11) 服务监听地址配置
 	// -----------------------------
 	// SERVER_ADDR 用于指定监听地址，例如 ":8080" 或 "127.0.0.1:8080"
 	addr := strings.TrimSpace(os.Getenv("SERVER_ADDR"))
@@ -237,12 +159,12 @@ func main() {
 	}
 
 	// -----------------------------
-	// 11) 构造 HTTP Server 并启动
+	// 12) 构造 HTTP Server 并启动
 	// -----------------------------
 	server := &http.Server{
 		Addr: addr,
 		// 外层套一层 logging 中间件，用于打印请求日志。
-		Handler: logging(dataStore, mux),
+		Handler: router,
 
 		// 读取请求头的超时时间，避免慢速请求头攻击（Slowloris）。
 		ReadHeaderTimeout: 5 * time.Second,
@@ -270,16 +192,15 @@ func mustCreateStore(uploadDir string) store.API {
 	return dbStore
 }
 
-// logging 是一个非常简单的中间件：
+// loggingMiddleware 是一个非常简单的中间件：
 // 每次请求都会打印 "METHOD PATH"，然后继续交给下游 handler 处理。
-func logging(dataStore store.API, next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func loggingMiddleware(dataStore store.API) gin.HandlerFunc {
+	return func(c *gin.Context) {
 		start := time.Now()
-		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
-		next.ServeHTTP(sw, r)
+		c.Next()
 
 		userID := "-"
-		token := strings.TrimSpace(r.Header.Get("Authorization"))
+		token := strings.TrimSpace(c.GetHeader("Authorization"))
 		if strings.HasPrefix(strings.ToLower(token), "bearer ") {
 			token = strings.TrimSpace(token[7:])
 		} else {
@@ -291,19 +212,10 @@ func logging(dataStore store.API, next http.Handler) http.Handler {
 			}
 		}
 
-		ip := clientIP(r)
-		log.Printf("%s %s status=%d ip=%s user=%s dur=%s", r.Method, r.URL.Path, sw.status, ip, userID, time.Since(start))
-	})
-}
-
-type statusWriter struct {
-	http.ResponseWriter
-	status int
-}
-
-func (w *statusWriter) WriteHeader(code int) {
-	w.status = code
-	w.ResponseWriter.WriteHeader(code)
+		ip := clientIP(c.Request)
+		status := c.Writer.Status()
+		log.Printf("%s %s status=%d ip=%s user=%s dur=%s", c.Request.Method, c.Request.URL.Path, status, ip, userID, time.Since(start))
+	}
 }
 
 func clientIP(r *http.Request) string {

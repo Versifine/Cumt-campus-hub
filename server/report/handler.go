@@ -6,8 +6,9 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/gin-gonic/gin"
+
 	"github.com/Versifine/Cumt-cumpus-hub/server/auth"
-	"github.com/Versifine/Cumt-cumpus-hub/server/internal/transport"
 	"github.com/Versifine/Cumt-cumpus-hub/server/store"
 )
 
@@ -16,13 +17,8 @@ type Handler struct {
 	Auth  *auth.Service
 }
 
-func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		transport.WriteError(w, http.StatusMethodNotAllowed, 2001, "method not allowed")
-		return
-	}
-
-	user, ok := h.Auth.RequireUser(w, r)
+func (h *Handler) Create(c *gin.Context) {
+	user, ok := h.Auth.RequireUser(c)
 	if !ok {
 		return
 	}
@@ -33,8 +29,8 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		Reason     string `json:"reason"`
 		Detail     string `json:"detail"`
 	}
-	if err := transport.ReadJSON(r, &req); err != nil {
-		transport.WriteError(w, http.StatusBadRequest, 2001, "invalid json")
+	if err := c.ShouldBindJSON(&req); err != nil {
+		writeError(c, http.StatusBadRequest, 2001, "invalid json")
 		return
 	}
 
@@ -42,9 +38,9 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		switch err {
 		case store.ErrInvalidInput:
-			transport.WriteError(w, http.StatusBadRequest, 2001, "missing fields")
+			writeError(c, http.StatusBadRequest, 2001, "missing fields")
 		default:
-			transport.WriteError(w, http.StatusInternalServerError, 5000, "server error")
+			writeError(c, http.StatusInternalServerError, 5000, "server error")
 		}
 		return
 	}
@@ -54,31 +50,26 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		"status":     report.Status,
 		"created_at": report.CreatedAt,
 	}
-	transport.WriteJSON(w, http.StatusOK, resp)
+	c.JSON(http.StatusOK, resp)
 }
 
-func (h *Handler) AdminList(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		transport.WriteError(w, http.StatusMethodNotAllowed, 2001, "method not allowed")
-		return
-	}
-
-	user, ok := h.Auth.RequireUser(w, r)
+func (h *Handler) AdminList(c *gin.Context) {
+	user, ok := h.Auth.RequireUser(c)
 	if !ok {
 		return
 	}
 	if !isAdmin(user) {
-		transport.WriteError(w, http.StatusForbidden, 1002, "forbidden")
+		writeError(c, http.StatusForbidden, 1002, "forbidden")
 		return
 	}
 
-	status := strings.TrimSpace(r.URL.Query().Get("status"))
-	page := parsePositiveInt(r.URL.Query().Get("page"), 1)
-	pageSize := parsePositiveInt(r.URL.Query().Get("page_size"), 20)
+	status := strings.TrimSpace(c.Query("status"))
+	page := parsePositiveInt(c.Query("page"), 1)
+	pageSize := parsePositiveInt(c.Query("page_size"), 20)
 
 	items, total, err := h.Store.Reports(status, page, pageSize)
 	if err != nil {
-		transport.WriteError(w, http.StatusInternalServerError, 5000, "server error")
+		writeError(c, http.StatusInternalServerError, 5000, "server error")
 		return
 	}
 
@@ -86,49 +77,48 @@ func (h *Handler) AdminList(w http.ResponseWriter, r *http.Request) {
 		"items": items,
 		"total": total,
 	}
-	transport.WriteJSON(w, http.StatusOK, resp)
+	c.JSON(http.StatusOK, resp)
 }
 
-func (h *Handler) AdminUpdate(reportID string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPatch {
-			transport.WriteError(w, http.StatusMethodNotAllowed, 2001, "method not allowed")
-			return
-		}
-
-		user, ok := h.Auth.RequireUser(w, r)
-		if !ok {
-			return
-		}
-		if !isAdmin(user) {
-			transport.WriteError(w, http.StatusForbidden, 1002, "forbidden")
-			return
-		}
-
-		var req struct {
-			Status string `json:"status"`
-			Action string `json:"action"`
-			Note   string `json:"note"`
-		}
-		if err := transport.ReadJSON(r, &req); err != nil {
-			transport.WriteError(w, http.StatusBadRequest, 2001, "invalid json")
-			return
-		}
-
-		updated, err := h.Store.UpdateReport(reportID, req.Status, req.Action, req.Note, user.ID)
-		if err != nil {
-			switch err {
-			case store.ErrInvalidInput:
-				transport.WriteError(w, http.StatusBadRequest, 2001, "missing fields")
-			case store.ErrNotFound:
-				transport.WriteError(w, http.StatusNotFound, 2001, "not found")
-			default:
-				transport.WriteError(w, http.StatusInternalServerError, 5000, "server error")
-			}
-			return
-		}
-		transport.WriteJSON(w, http.StatusOK, updated)
+func (h *Handler) AdminUpdate(c *gin.Context) {
+	reportID := strings.TrimSpace(c.Param("id"))
+	if reportID == "" {
+		writeError(c, http.StatusNotFound, 2001, "not found")
+		return
 	}
+
+	user, ok := h.Auth.RequireUser(c)
+	if !ok {
+		return
+	}
+	if !isAdmin(user) {
+		writeError(c, http.StatusForbidden, 1002, "forbidden")
+		return
+	}
+
+	var req struct {
+		Status string `json:"status"`
+		Action string `json:"action"`
+		Note   string `json:"note"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		writeError(c, http.StatusBadRequest, 2001, "invalid json")
+		return
+	}
+
+	updated, err := h.Store.UpdateReport(reportID, req.Status, req.Action, req.Note, user.ID)
+	if err != nil {
+		switch err {
+		case store.ErrInvalidInput:
+			writeError(c, http.StatusBadRequest, 2001, "missing fields")
+		case store.ErrNotFound:
+			writeError(c, http.StatusNotFound, 2001, "not found")
+		default:
+			writeError(c, http.StatusInternalServerError, 5000, "server error")
+		}
+		return
+	}
+	c.JSON(http.StatusOK, updated)
 }
 
 func isAdmin(user store.User) bool {
@@ -158,4 +148,8 @@ func parsePositiveInt(value string, fallback int) int {
 		return fallback
 	}
 	return parsed
+}
+
+func writeError(c *gin.Context, status int, code int, message string) {
+	c.JSON(status, gin.H{"code": code, "message": message})
 }

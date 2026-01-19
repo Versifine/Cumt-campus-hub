@@ -9,9 +9,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gin-gonic/gin"
+
 	"github.com/Versifine/Cumt-cumpus-hub/server/auth"
 	"github.com/Versifine/Cumt-cumpus-hub/server/internal/ratelimit"
-	"github.com/Versifine/Cumt-cumpus-hub/server/internal/transport"
 	"github.com/Versifine/Cumt-cumpus-hub/server/store"
 )
 
@@ -25,102 +26,19 @@ var (
 	commentLimiter = ratelimit.NewFixedWindow(30*time.Second, 10)
 )
 
-// Boards handles GET /api/v1/boards.
-func (h *Handler) Boards(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		transport.WriteError(w, http.StatusMethodNotAllowed, 2001, "method not allowed")
-		return
-	}
-
-	transport.WriteJSON(w, http.StatusOK, h.Store.Boards())
+// GetBoards handles GET /api/v1/boards.
+func (h *Handler) GetBoards(c *gin.Context) {
+	c.JSON(http.StatusOK, h.Store.Boards())
 }
 
-// Posts handles GET /api/v1/posts and POST /api/v1/posts.
-func (h *Handler) Posts(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		h.listPosts(w, r)
-	case http.MethodPost:
-		h.createPost(w, r)
-	default:
-		transport.WriteError(w, http.StatusMethodNotAllowed, 2001, "method not allowed")
-	}
-}
+// ListPosts handles GET /api/v1/posts.
+func (h *Handler) ListPosts(c *gin.Context) {
+	boardID := c.Query("board_id")
+	authorID := c.Query("author_id")
+	page := parsePositiveInt(c.Query("page"), 1)
+	pageSize := parsePositiveInt(c.Query("page_size"), 20)
 
-// Comments returns a handler for GET/POST /api/v1/posts/{post_id}/comments.
-func (h *Handler) Comments(postID string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodGet:
-			h.listComments(w, r, postID)
-		case http.MethodPost:
-			h.createComment(w, r, postID)
-		default:
-			transport.WriteError(w, http.StatusMethodNotAllowed, 2001, "method not allowed")
-		}
-	}
-}
-
-// Post handles GET /api/v1/posts/{post_id} and DELETE /api/v1/posts/{post_id}.
-func (h *Handler) Post(postID string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodGet:
-			h.getPost(w, r, postID)
-		case http.MethodDelete:
-			h.deletePost(w, r, postID)
-		default:
-			transport.WriteError(w, http.StatusMethodNotAllowed, 2001, "method not allowed")
-		}
-	}
-}
-
-// Votes handles POST/DELETE /api/v1/posts/{post_id}/votes.
-func (h *Handler) Votes(postID string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodPost:
-			h.votePost(w, r, postID)
-		case http.MethodDelete:
-			h.clearVote(w, r, postID)
-		default:
-			transport.WriteError(w, http.StatusMethodNotAllowed, 2001, "method not allowed")
-		}
-	}
-}
-
-// Comment handles DELETE /api/v1/posts/{post_id}/comments/{comment_id}.
-func (h *Handler) Comment(postID, commentID string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodDelete {
-			transport.WriteError(w, http.StatusMethodNotAllowed, 2001, "method not allowed")
-			return
-		}
-		h.deleteComment(w, r, postID, commentID)
-	}
-}
-
-// CommentVotes handles POST/DELETE /api/v1/posts/{post_id}/comments/{comment_id}/votes.
-func (h *Handler) CommentVotes(postID, commentID string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodPost:
-			h.voteComment(w, r, postID, commentID)
-		case http.MethodDelete:
-			h.clearCommentVote(w, r, postID, commentID)
-		default:
-			transport.WriteError(w, http.StatusMethodNotAllowed, 2001, "method not allowed")
-		}
-	}
-}
-
-func (h *Handler) listPosts(w http.ResponseWriter, r *http.Request) {
-	boardID := r.URL.Query().Get("board_id")
-	authorID := r.URL.Query().Get("author_id")
-	page := parsePositiveInt(r.URL.Query().Get("page"), 1)
-	pageSize := parsePositiveInt(r.URL.Query().Get("page_size"), 20)
-
-	viewerID := h.viewerID(r)
+	viewerID := h.viewerID(c)
 	posts := h.Store.Posts(boardID)
 	if authorID != "" {
 		filtered := make([]store.Post, 0, len(posts))
@@ -188,16 +106,17 @@ func (h *Handler) listPosts(w http.ResponseWriter, r *http.Request) {
 		Total: total,
 	}
 
-	transport.WriteJSON(w, http.StatusOK, resp)
+	c.JSON(http.StatusOK, resp)
 }
 
-func (h *Handler) createPost(w http.ResponseWriter, r *http.Request) {
-	user, ok := h.Auth.RequireUser(w, r)
+// CreatePost handles POST /api/v1/posts.
+func (h *Handler) CreatePost(c *gin.Context) {
+	user, ok := h.Auth.RequireUser(c)
 	if !ok {
 		return
 	}
-	if !h.allowWrite(postLimiter, r, user.ID) {
-		transport.WriteError(w, http.StatusTooManyRequests, 1005, "rate limited")
+	if !h.allowWrite(postLimiter, c, user.ID) {
+		writeError(c, http.StatusTooManyRequests, 1005, "rate limited")
 		return
 	}
 
@@ -209,34 +128,34 @@ func (h *Handler) createPost(w http.ResponseWriter, r *http.Request) {
 		Tags        []string        `json:"tags"`
 		Attachments []string        `json:"attachments"`
 	}
-	if err := transport.ReadJSON(r, &req); err != nil {
-		transport.WriteError(w, http.StatusBadRequest, 2001, "invalid json")
+	if err := c.ShouldBindJSON(&req); err != nil {
+		writeError(c, http.StatusBadRequest, 2001, "invalid json")
 		return
 	}
 	if req.BoardID == "" || req.Title == "" {
-		transport.WriteError(w, http.StatusBadRequest, 2001, "missing fields")
+		writeError(c, http.StatusBadRequest, 2001, "missing fields")
 		return
 	}
 	if _, ok := h.Store.GetBoard(req.BoardID); !ok {
-		transport.WriteError(w, http.StatusBadRequest, 2001, "invalid board_id")
+		writeError(c, http.StatusBadRequest, 2001, "invalid board_id")
 		return
 	}
 
 	contentJSON := strings.TrimSpace(string(req.ContentJSON))
 	attachments := normalizeAttachmentIDs(req.Attachments)
 	if len(attachments) > maxPostAttachments {
-		transport.WriteError(w, http.StatusBadRequest, 2001, "too many attachments")
+		writeError(c, http.StatusBadRequest, 2001, "too many attachments")
 		return
 	}
 	for _, fileID := range attachments {
 		if _, ok := h.Store.GetFile(fileID); !ok {
-			transport.WriteError(w, http.StatusBadRequest, 2001, "invalid attachment_id")
+			writeError(c, http.StatusBadRequest, 2001, "invalid attachment_id")
 			return
 		}
 	}
 
 	if strings.TrimSpace(req.Content) == "" && contentJSON == "" && len(attachments) == 0 {
-		transport.WriteError(w, http.StatusBadRequest, 2001, "missing content")
+		writeError(c, http.StatusBadRequest, 2001, "missing content")
 		return
 	}
 	tags := normalizeTags(req.Tags, maxPostTags)
@@ -263,16 +182,22 @@ func (h *Handler) createPost(w http.ResponseWriter, r *http.Request) {
 		CreatedAt:   post.CreatedAt,
 	}
 
-	transport.WriteJSON(w, http.StatusOK, resp)
+	c.JSON(http.StatusOK, resp)
 }
 
-func (h *Handler) listComments(w http.ResponseWriter, r *http.Request, postID string) {
+// ListComments handles GET /api/v1/posts/{post_id}/comments.
+func (h *Handler) ListComments(c *gin.Context) {
+	postID := strings.TrimSpace(c.Param("id"))
+	if postID == "" {
+		writeError(c, http.StatusNotFound, 2001, "not found")
+		return
+	}
 	if _, ok := h.Store.GetPost(postID); !ok {
-		transport.WriteError(w, http.StatusNotFound, 2001, "not found")
+		writeError(c, http.StatusNotFound, 2001, "not found")
 		return
 	}
 
-	viewerID := h.viewerID(r)
+	viewerID := h.viewerID(c)
 	comments := h.Store.Comments(postID)
 	items := make([]commentItem, 0, len(comments))
 	for _, comment := range comments {
@@ -305,20 +230,27 @@ func (h *Handler) listComments(w http.ResponseWriter, r *http.Request, postID st
 		})
 	}
 
-	transport.WriteJSON(w, http.StatusOK, items)
+	c.JSON(http.StatusOK, items)
 }
 
-func (h *Handler) createComment(w http.ResponseWriter, r *http.Request, postID string) {
-	user, ok := h.Auth.RequireUser(w, r)
+// CreateComment handles POST /api/v1/posts/{post_id}/comments.
+func (h *Handler) CreateComment(c *gin.Context) {
+	postID := strings.TrimSpace(c.Param("id"))
+	if postID == "" {
+		writeError(c, http.StatusNotFound, 2001, "not found")
+		return
+	}
+
+	user, ok := h.Auth.RequireUser(c)
 	if !ok {
 		return
 	}
-	if !h.allowWrite(commentLimiter, r, user.ID) {
-		transport.WriteError(w, http.StatusTooManyRequests, 1005, "rate limited")
+	if !h.allowWrite(commentLimiter, c, user.ID) {
+		writeError(c, http.StatusTooManyRequests, 1005, "rate limited")
 		return
 	}
 	if _, ok := h.Store.GetPost(postID); !ok {
-		transport.WriteError(w, http.StatusNotFound, 2001, "not found")
+		writeError(c, http.StatusNotFound, 2001, "not found")
 		return
 	}
 
@@ -329,14 +261,14 @@ func (h *Handler) createComment(w http.ResponseWriter, r *http.Request, postID s
 		Tags        []string        `json:"tags"`
 		Attachments []string        `json:"attachments"`
 	}
-	if err := transport.ReadJSON(r, &req); err != nil {
-		transport.WriteError(w, http.StatusBadRequest, 2001, "invalid json")
+	if err := c.ShouldBindJSON(&req); err != nil {
+		writeError(c, http.StatusBadRequest, 2001, "invalid json")
 		return
 	}
 	parentIDValue := strings.TrimSpace(req.ParentID)
 	if parentIDValue != "" {
 		if _, ok := h.Store.GetComment(postID, parentIDValue); !ok {
-			transport.WriteError(w, http.StatusBadRequest, 2001, "invalid parent_id")
+			writeError(c, http.StatusBadRequest, 2001, "invalid parent_id")
 			return
 		}
 	}
@@ -344,17 +276,17 @@ func (h *Handler) createComment(w http.ResponseWriter, r *http.Request, postID s
 	contentJSON := strings.TrimSpace(string(req.ContentJSON))
 	attachments := normalizeAttachmentIDs(req.Attachments)
 	if len(attachments) > maxCommentAttachments {
-		transport.WriteError(w, http.StatusBadRequest, 2001, "too many attachments")
+		writeError(c, http.StatusBadRequest, 2001, "too many attachments")
 		return
 	}
 	for _, fileID := range attachments {
 		if _, ok := h.Store.GetFile(fileID); !ok {
-			transport.WriteError(w, http.StatusBadRequest, 2001, "invalid attachment_id")
+			writeError(c, http.StatusBadRequest, 2001, "invalid attachment_id")
 			return
 		}
 	}
 	if strings.TrimSpace(req.Content) == "" && contentJSON == "" && len(attachments) == 0 {
-		transport.WriteError(w, http.StatusBadRequest, 2001, "missing content")
+		writeError(c, http.StatusBadRequest, 2001, "missing content")
 		return
 	}
 
@@ -391,19 +323,20 @@ func (h *Handler) createComment(w http.ResponseWriter, r *http.Request, postID s
 		MyVote:      0,
 	}
 
-	transport.WriteJSON(w, http.StatusOK, resp)
+	c.JSON(http.StatusOK, resp)
 }
 
-func (h *Handler) getPost(w http.ResponseWriter, r *http.Request, postID string) {
-	postID = strings.TrimSpace(postID)
+// GetPost handles GET /api/v1/posts/{post_id}.
+func (h *Handler) GetPost(c *gin.Context) {
+	postID := strings.TrimSpace(c.Param("id"))
 	if postID == "" {
-		transport.WriteError(w, http.StatusNotFound, 2001, "not found")
+		writeError(c, http.StatusNotFound, 2001, "not found")
 		return
 	}
 
 	post, ok := h.Store.GetPost(postID)
 	if !ok {
-		transport.WriteError(w, http.StatusNotFound, 2001, "not found")
+		writeError(c, http.StatusNotFound, 2001, "not found")
 		return
 	}
 
@@ -412,7 +345,7 @@ func (h *Handler) getPost(w http.ResponseWriter, r *http.Request, postID string)
 	score := h.Store.PostScore(post.ID)
 	commentCount := h.Store.CommentCount(post.ID)
 	myVote := 0
-	if viewerID := h.viewerID(r); viewerID != "" {
+	if viewerID := h.viewerID(c); viewerID != "" {
 		myVote = h.Store.PostVote(post.ID, viewerID)
 	}
 
@@ -459,11 +392,18 @@ func (h *Handler) getPost(w http.ResponseWriter, r *http.Request, postID string)
 		DeletedAt:    deletedAt,
 	}
 
-	transport.WriteJSON(w, http.StatusOK, resp)
+	c.JSON(http.StatusOK, resp)
 }
 
-func (h *Handler) deletePost(w http.ResponseWriter, r *http.Request, postID string) {
-	user, ok := h.Auth.RequireUser(w, r)
+// DeletePost handles DELETE /api/v1/posts/{post_id}.
+func (h *Handler) DeletePost(c *gin.Context) {
+	postID := strings.TrimSpace(c.Param("id"))
+	if postID == "" {
+		writeError(c, http.StatusNotFound, 2001, "not found")
+		return
+	}
+
+	user, ok := h.Auth.RequireUser(c)
 	if !ok {
 		return
 	}
@@ -471,41 +411,27 @@ func (h *Handler) deletePost(w http.ResponseWriter, r *http.Request, postID stri
 	if err := h.Store.SoftDeletePost(postID, user.ID, isAdmin(user)); err != nil {
 		switch err {
 		case store.ErrNotFound:
-			transport.WriteError(w, http.StatusNotFound, 2001, "not found")
+			writeError(c, http.StatusNotFound, 2001, "not found")
 		case store.ErrForbidden:
-			transport.WriteError(w, http.StatusForbidden, 1002, "forbidden")
+			writeError(c, http.StatusForbidden, 1002, "forbidden")
 		default:
-			transport.WriteError(w, http.StatusInternalServerError, 5000, "server error")
+			writeError(c, http.StatusInternalServerError, 5000, "server error")
 		}
 		return
 	}
 
-	transport.WriteJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+	c.JSON(http.StatusOK, map[string]string{"status": "deleted"})
 }
 
-func (h *Handler) deleteComment(w http.ResponseWriter, r *http.Request, postID, commentID string) {
-	user, ok := h.Auth.RequireUser(w, r)
-	if !ok {
+// VotePost handles POST /api/v1/posts/{post_id}/votes.
+func (h *Handler) VotePost(c *gin.Context) {
+	postID := strings.TrimSpace(c.Param("id"))
+	if postID == "" {
+		writeError(c, http.StatusNotFound, 2001, "not found")
 		return
 	}
 
-	if err := h.Store.SoftDeleteComment(postID, commentID, user.ID, isAdmin(user)); err != nil {
-		switch err {
-		case store.ErrNotFound:
-			transport.WriteError(w, http.StatusNotFound, 2001, "not found")
-		case store.ErrForbidden:
-			transport.WriteError(w, http.StatusForbidden, 1002, "forbidden")
-		default:
-			transport.WriteError(w, http.StatusInternalServerError, 5000, "server error")
-		}
-		return
-	}
-
-	transport.WriteJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
-}
-
-func (h *Handler) votePost(w http.ResponseWriter, r *http.Request, postID string) {
-	user, ok := h.Auth.RequireUser(w, r)
+	user, ok := h.Auth.RequireUser(c)
 	if !ok {
 		return
 	}
@@ -513,12 +439,12 @@ func (h *Handler) votePost(w http.ResponseWriter, r *http.Request, postID string
 	var req struct {
 		Value int `json:"value"`
 	}
-	if err := transport.ReadJSON(r, &req); err != nil {
-		transport.WriteError(w, http.StatusBadRequest, 2001, "invalid json")
+	if err := c.ShouldBindJSON(&req); err != nil {
+		writeError(c, http.StatusBadRequest, 2001, "invalid json")
 		return
 	}
 	if req.Value != 1 && req.Value != -1 {
-		transport.WriteError(w, http.StatusBadRequest, 2001, "invalid vote value")
+		writeError(c, http.StatusBadRequest, 2001, "invalid vote value")
 		return
 	}
 
@@ -526,11 +452,11 @@ func (h *Handler) votePost(w http.ResponseWriter, r *http.Request, postID string
 	if err != nil {
 		switch err {
 		case store.ErrNotFound:
-			transport.WriteError(w, http.StatusNotFound, 2001, "not found")
+			writeError(c, http.StatusNotFound, 2001, "not found")
 		case store.ErrInvalidInput:
-			transport.WriteError(w, http.StatusBadRequest, 2001, "invalid input")
+			writeError(c, http.StatusBadRequest, 2001, "invalid input")
 		default:
-			transport.WriteError(w, http.StatusInternalServerError, 5000, "server error")
+			writeError(c, http.StatusInternalServerError, 5000, "server error")
 		}
 		return
 	}
@@ -540,11 +466,18 @@ func (h *Handler) votePost(w http.ResponseWriter, r *http.Request, postID string
 		"score":   score,
 		"my_vote": myVote,
 	}
-	transport.WriteJSON(w, http.StatusOK, resp)
+	c.JSON(http.StatusOK, resp)
 }
 
-func (h *Handler) clearVote(w http.ResponseWriter, r *http.Request, postID string) {
-	user, ok := h.Auth.RequireUser(w, r)
+// ClearPostVote handles DELETE /api/v1/posts/{post_id}/votes.
+func (h *Handler) ClearPostVote(c *gin.Context) {
+	postID := strings.TrimSpace(c.Param("id"))
+	if postID == "" {
+		writeError(c, http.StatusNotFound, 2001, "not found")
+		return
+	}
+
+	user, ok := h.Auth.RequireUser(c)
 	if !ok {
 		return
 	}
@@ -553,11 +486,11 @@ func (h *Handler) clearVote(w http.ResponseWriter, r *http.Request, postID strin
 	if err != nil {
 		switch err {
 		case store.ErrNotFound:
-			transport.WriteError(w, http.StatusNotFound, 2001, "not found")
+			writeError(c, http.StatusNotFound, 2001, "not found")
 		case store.ErrInvalidInput:
-			transport.WriteError(w, http.StatusBadRequest, 2001, "invalid input")
+			writeError(c, http.StatusBadRequest, 2001, "invalid input")
 		default:
-			transport.WriteError(w, http.StatusInternalServerError, 5000, "server error")
+			writeError(c, http.StatusInternalServerError, 5000, "server error")
 		}
 		return
 	}
@@ -567,11 +500,49 @@ func (h *Handler) clearVote(w http.ResponseWriter, r *http.Request, postID strin
 		"score":   score,
 		"my_vote": myVote,
 	}
-	transport.WriteJSON(w, http.StatusOK, resp)
+	c.JSON(http.StatusOK, resp)
 }
 
-func (h *Handler) voteComment(w http.ResponseWriter, r *http.Request, postID, commentID string) {
-	user, ok := h.Auth.RequireUser(w, r)
+// DeleteComment handles DELETE /api/v1/posts/{post_id}/comments/{comment_id}.
+func (h *Handler) DeleteComment(c *gin.Context) {
+	postID := strings.TrimSpace(c.Param("id"))
+	commentID := strings.TrimSpace(c.Param("commentId"))
+
+	if postID == "" || commentID == "" {
+		writeError(c, http.StatusNotFound, 2001, "not found")
+		return
+	}
+
+	user, ok := h.Auth.RequireUser(c)
+	if !ok {
+		return
+	}
+
+	if err := h.Store.SoftDeleteComment(postID, commentID, user.ID, isAdmin(user)); err != nil {
+		switch err {
+		case store.ErrNotFound:
+			writeError(c, http.StatusNotFound, 2001, "not found")
+		case store.ErrForbidden:
+			writeError(c, http.StatusForbidden, 1002, "forbidden")
+		default:
+			writeError(c, http.StatusInternalServerError, 5000, "server error")
+		}
+		return
+	}
+
+	c.JSON(http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+// VoteComment handles POST /api/v1/posts/{post_id}/comments/{comment_id}/votes.
+func (h *Handler) VoteComment(c *gin.Context) {
+	postID := strings.TrimSpace(c.Param("id"))
+	commentID := strings.TrimSpace(c.Param("commentId"))
+	if postID == "" || commentID == "" {
+		writeError(c, http.StatusNotFound, 2001, "not found")
+		return
+	}
+
+	user, ok := h.Auth.RequireUser(c)
 	if !ok {
 		return
 	}
@@ -579,12 +550,12 @@ func (h *Handler) voteComment(w http.ResponseWriter, r *http.Request, postID, co
 	var req struct {
 		Value int `json:"value"`
 	}
-	if err := transport.ReadJSON(r, &req); err != nil {
-		transport.WriteError(w, http.StatusBadRequest, 2001, "invalid json")
+	if err := c.ShouldBindJSON(&req); err != nil {
+		writeError(c, http.StatusBadRequest, 2001, "invalid json")
 		return
 	}
 	if req.Value != 1 && req.Value != -1 {
-		transport.WriteError(w, http.StatusBadRequest, 2001, "invalid vote value")
+		writeError(c, http.StatusBadRequest, 2001, "invalid vote value")
 		return
 	}
 
@@ -592,11 +563,11 @@ func (h *Handler) voteComment(w http.ResponseWriter, r *http.Request, postID, co
 	if err != nil {
 		switch err {
 		case store.ErrNotFound:
-			transport.WriteError(w, http.StatusNotFound, 2001, "not found")
+			writeError(c, http.StatusNotFound, 2001, "not found")
 		case store.ErrInvalidInput:
-			transport.WriteError(w, http.StatusBadRequest, 2001, "invalid input")
+			writeError(c, http.StatusBadRequest, 2001, "invalid input")
 		default:
-			transport.WriteError(w, http.StatusInternalServerError, 5000, "server error")
+			writeError(c, http.StatusInternalServerError, 5000, "server error")
 		}
 		return
 	}
@@ -606,11 +577,19 @@ func (h *Handler) voteComment(w http.ResponseWriter, r *http.Request, postID, co
 		"score":      score,
 		"my_vote":    myVote,
 	}
-	transport.WriteJSON(w, http.StatusOK, resp)
+	c.JSON(http.StatusOK, resp)
 }
 
-func (h *Handler) clearCommentVote(w http.ResponseWriter, r *http.Request, postID, commentID string) {
-	user, ok := h.Auth.RequireUser(w, r)
+// ClearCommentVote handles DELETE /api/v1/posts/{post_id}/comments/{comment_id}/votes.
+func (h *Handler) ClearCommentVote(c *gin.Context) {
+	postID := strings.TrimSpace(c.Param("id"))
+	commentID := strings.TrimSpace(c.Param("commentId"))
+	if postID == "" || commentID == "" {
+		writeError(c, http.StatusNotFound, 2001, "not found")
+		return
+	}
+
+	user, ok := h.Auth.RequireUser(c)
 	if !ok {
 		return
 	}
@@ -619,11 +598,11 @@ func (h *Handler) clearCommentVote(w http.ResponseWriter, r *http.Request, postI
 	if err != nil {
 		switch err {
 		case store.ErrNotFound:
-			transport.WriteError(w, http.StatusNotFound, 2001, "not found")
+			writeError(c, http.StatusNotFound, 2001, "not found")
 		case store.ErrInvalidInput:
-			transport.WriteError(w, http.StatusBadRequest, 2001, "invalid input")
+			writeError(c, http.StatusBadRequest, 2001, "invalid input")
 		default:
-			transport.WriteError(w, http.StatusInternalServerError, 5000, "server error")
+			writeError(c, http.StatusInternalServerError, 5000, "server error")
 		}
 		return
 	}
@@ -633,11 +612,11 @@ func (h *Handler) clearCommentVote(w http.ResponseWriter, r *http.Request, postI
 		"score":      score,
 		"my_vote":    myVote,
 	}
-	transport.WriteJSON(w, http.StatusOK, resp)
+	c.JSON(http.StatusOK, resp)
 }
 
-func (h *Handler) allowWrite(limiter *ratelimit.FixedWindow, r *http.Request, userID string) bool {
-	ip := clientIP(r)
+func (h *Handler) allowWrite(limiter *ratelimit.FixedWindow, c *gin.Context, userID string) bool {
+	ip := clientIP(c.Request)
 	if ip != "" && !limiter.Allow("ip:"+ip) {
 		return false
 	}
@@ -827,8 +806,8 @@ func parsePositiveInt(value string, fallback int) int {
 	return parsed
 }
 
-func (h *Handler) viewerID(r *http.Request) string {
-	token := bearerToken(r)
+func (h *Handler) viewerID(c *gin.Context) string {
+	token := bearerToken(c)
 	if token == "" {
 		return ""
 	}
@@ -839,8 +818,8 @@ func (h *Handler) viewerID(r *http.Request) string {
 	return user.ID
 }
 
-func bearerToken(r *http.Request) string {
-	authHeader := strings.TrimSpace(r.Header.Get("Authorization"))
+func bearerToken(c *gin.Context) string {
+	authHeader := strings.TrimSpace(c.GetHeader("Authorization"))
 	if authHeader == "" {
 		return ""
 	}
@@ -848,4 +827,8 @@ func bearerToken(r *http.Request) string {
 		return strings.TrimSpace(authHeader[7:])
 	}
 	return ""
+}
+
+func writeError(c *gin.Context, status int, code int, message string) {
+	c.JSON(status, gin.H{"code": code, "message": message})
 }

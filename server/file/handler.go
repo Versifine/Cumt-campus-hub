@@ -14,8 +14,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gin-gonic/gin"
+
 	"github.com/Versifine/Cumt-cumpus-hub/server/auth"
-	"github.com/Versifine/Cumt-cumpus-hub/server/internal/transport"
 	"github.com/Versifine/Cumt-cumpus-hub/server/store"
 )
 
@@ -26,38 +27,33 @@ type Handler struct {
 }
 
 // Upload handles POST /api/v1/files (multipart/form-data, field name: file).
-func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		transport.WriteError(w, http.StatusMethodNotAllowed, 2001, "method not allowed")
-		return
-	}
-
-	user, ok := h.Auth.RequireUser(w, r)
+func (h *Handler) Upload(c *gin.Context) {
+	user, ok := h.Auth.RequireUser(c)
 	if !ok {
 		return
 	}
 
-	r.Body = http.MaxBytesReader(w, r.Body, 100<<20)
-	if err := r.ParseMultipartForm(100 << 20); err != nil {
-		transport.WriteError(w, http.StatusBadRequest, 2001, "invalid multipart form")
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 100<<20)
+	if err := c.Request.ParseMultipartForm(100 << 20); err != nil {
+		writeError(c, http.StatusBadRequest, 2001, "invalid multipart form")
 		return
 	}
 
-	file, header, err := r.FormFile("file")
+	file, header, err := c.Request.FormFile("file")
 	if err != nil {
-		transport.WriteError(w, http.StatusBadRequest, 2001, "missing file")
+		writeError(c, http.StatusBadRequest, 2001, "missing file")
 		return
 	}
 	defer file.Close()
 
 	filename := sanitizeFilename(header.Filename)
 	if filename == "" {
-		transport.WriteError(w, http.StatusBadRequest, 2001, "invalid filename")
+		writeError(c, http.StatusBadRequest, 2001, "invalid filename")
 		return
 	}
 
 	if err := os.MkdirAll(h.UploadDir, 0o755); err != nil {
-		transport.WriteError(w, http.StatusInternalServerError, 5000, "failed to prepare storage")
+		writeError(c, http.StatusInternalServerError, 5000, "failed to prepare storage")
 		return
 	}
 
@@ -66,13 +62,13 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 
 	dst, err := os.Create(storagePath)
 	if err != nil {
-		transport.WriteError(w, http.StatusInternalServerError, 5000, "failed to save file")
+		writeError(c, http.StatusInternalServerError, 5000, "failed to save file")
 		return
 	}
 	defer dst.Close()
 
 	if _, err := io.Copy(dst, file); err != nil {
-		transport.WriteError(w, http.StatusInternalServerError, 5000, "failed to write file")
+		writeError(c, http.StatusInternalServerError, 5000, "failed to write file")
 		return
 	}
 
@@ -93,38 +89,33 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 		Height:   meta.Height,
 	}
 
-	transport.WriteJSON(w, http.StatusOK, resp)
+	c.JSON(http.StatusOK, resp)
 }
 
 // UploadImage handles POST /api/uploads/images (multipart/form-data, field name: file).
-func (h *Handler) UploadImage(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		transport.WriteError(w, http.StatusMethodNotAllowed, 2001, "method not allowed")
-		return
-	}
-
-	user, ok := h.Auth.RequireUser(w, r)
+func (h *Handler) UploadImage(c *gin.Context) {
+	user, ok := h.Auth.RequireUser(c)
 	if !ok {
 		return
 	}
 
 	const maxInlineImageSize = 100 << 20
-	r.Body = http.MaxBytesReader(w, r.Body, maxInlineImageSize)
-	if err := r.ParseMultipartForm(maxInlineImageSize); err != nil {
-		transport.WriteError(w, http.StatusBadRequest, 2001, "invalid multipart form")
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxInlineImageSize)
+	if err := c.Request.ParseMultipartForm(maxInlineImageSize); err != nil {
+		writeError(c, http.StatusBadRequest, 2001, "invalid multipart form")
 		return
 	}
 
-	file, header, err := r.FormFile("file")
+	file, header, err := c.Request.FormFile("file")
 	if err != nil {
-		transport.WriteError(w, http.StatusBadRequest, 2001, "missing file")
+		writeError(c, http.StatusBadRequest, 2001, "missing file")
 		return
 	}
 	defer file.Close()
 
 	filename := sanitizeFilename(header.Filename)
 	if filename == "" {
-		transport.WriteError(w, http.StatusBadRequest, 2001, "invalid filename")
+		writeError(c, http.StatusBadRequest, 2001, "invalid filename")
 		return
 	}
 
@@ -132,12 +123,12 @@ func (h *Handler) UploadImage(w http.ResponseWriter, r *http.Request) {
 	n, _ := file.Read(sniff)
 	contentType := http.DetectContentType(sniff[:n])
 	if !strings.HasPrefix(contentType, "image/") {
-		transport.WriteError(w, http.StatusBadRequest, 2001, "invalid image type")
+		writeError(c, http.StatusBadRequest, 2001, "invalid image type")
 		return
 	}
 
 	if err := os.MkdirAll(h.UploadDir, 0o755); err != nil {
-		transport.WriteError(w, http.StatusInternalServerError, 5000, "failed to prepare storage")
+		writeError(c, http.StatusInternalServerError, 5000, "failed to prepare storage")
 		return
 	}
 
@@ -146,13 +137,13 @@ func (h *Handler) UploadImage(w http.ResponseWriter, r *http.Request) {
 
 	dst, err := os.Create(storagePath)
 	if err != nil {
-		transport.WriteError(w, http.StatusInternalServerError, 5000, "failed to save file")
+		writeError(c, http.StatusInternalServerError, 5000, "failed to save file")
 		return
 	}
 	defer dst.Close()
 
 	if _, err := io.Copy(dst, io.MultiReader(bytes.NewReader(sniff[:n]), file)); err != nil {
-		transport.WriteError(w, http.StatusInternalServerError, 5000, "failed to write file")
+		writeError(c, http.StatusInternalServerError, 5000, "failed to write file")
 		return
 	}
 
@@ -169,30 +160,24 @@ func (h *Handler) UploadImage(w http.ResponseWriter, r *http.Request) {
 		Height: meta.Height,
 	}
 
-	transport.WriteJSON(w, http.StatusOK, resp)
+	c.JSON(http.StatusOK, resp)
 }
 
-// Download returns a handler for GET /files/{file_id}.
-func (h *Handler) Download(fileID string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			transport.WriteError(w, http.StatusMethodNotAllowed, 2001, "method not allowed")
-			return
-		}
-
-		if fileID == "" {
-			transport.WriteError(w, http.StatusNotFound, 2001, "file not found")
-			return
-		}
-
-		meta, ok := h.Store.GetFile(fileID)
-		if !ok {
-			transport.WriteError(w, http.StatusNotFound, 2001, "file not found")
-			return
-		}
-
-		http.ServeFile(w, r, meta.StoragePath)
+// Download handles GET /files/{file_id}.
+func (h *Handler) Download(c *gin.Context) {
+	fileID := strings.TrimSpace(c.Param("id"))
+	if fileID == "" {
+		writeError(c, http.StatusNotFound, 2001, "file not found")
+		return
 	}
+
+	meta, ok := h.Store.GetFile(fileID)
+	if !ok {
+		writeError(c, http.StatusNotFound, 2001, "file not found")
+		return
+	}
+
+	c.File(meta.StoragePath)
 }
 
 // sanitizeFilename strips directory components and trims whitespace to prevent path traversal.
@@ -218,4 +203,8 @@ func readImageSize(path string) (int, int, bool) {
 		return 0, 0, false
 	}
 	return cfg.Width, cfg.Height, true
+}
+
+func writeError(c *gin.Context, status int, code int, message string) {
+	c.JSON(status, gin.H{"code": code, "message": message})
 }
