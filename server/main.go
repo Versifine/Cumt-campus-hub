@@ -86,14 +86,54 @@ func main() {
 	mux.HandleFunc("/api/v1/auth/login", authService.LoginHandler)
 
 	// 获取当前登录用户信息（通常依赖鉴权 token/cookie 等）。
-	mux.HandleFunc("/api/v1/users/me", authService.MeHandler)
+	mux.HandleFunc("/api/v1/users/me", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPatch {
+			authService.UpdateMeHandlerV2(w, r)
+			return
+		}
+		authService.MeHandler(w, r)
+	})
 	mux.HandleFunc("/api/v1/users/", func(w http.ResponseWriter, r *http.Request) {
-		userID := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/users/"), "/")
-		if userID == "" || userID == "me" {
+		// 路径形式： /api/v1/users/{id} 或 /api/v1/users/{id}/follow
+		suffix := strings.TrimPrefix(r.URL.Path, "/api/v1/users/")
+		parts := strings.Split(strings.Trim(suffix, "/"), "/")
+
+		if len(parts) == 0 || parts[0] == "" || parts[0] == "me" {
 			transport.WriteError(w, http.StatusNotFound, 2001, "not found")
 			return
 		}
-		authService.PublicUserHandler(userID)(w, r)
+
+		userID := parts[0]
+
+		if len(parts) == 2 {
+			switch parts[1] {
+			case "follow":
+				if r.Method == http.MethodPost {
+					authService.FollowHandler(userID)(w, r)
+				} else if r.Method == http.MethodDelete {
+					authService.UnfollowHandler(userID)(w, r)
+				} else {
+					transport.WriteError(w, http.StatusMethodNotAllowed, 2001, "method not allowed")
+				}
+				return
+			case "followers":
+				authService.FollowersHandler(userID)(w, r)
+				return
+			case "following":
+				authService.FollowingHandler(userID)(w, r)
+				return
+			case "comments":
+				authService.UserCommentsHandler(userID)(w, r)
+				return
+			}
+		}
+
+		if len(parts) == 1 {
+			authService.PublicUserHandler(userID)(w, r)
+			return
+		}
+
+		transport.WriteError(w, http.StatusNotFound, 2001, "not found")
 	})
 
 	// -----------------------------

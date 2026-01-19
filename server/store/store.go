@@ -10,6 +10,9 @@ import (
 type User struct {
 	ID        string
 	Nickname  string
+	Avatar    string
+	Cover     string
+	Bio       string
 	CreatedAt string
 }
 
@@ -23,6 +26,15 @@ type API interface {
 	Login(account, password string) (string, User, error)
 	UserByToken(token string) (User, bool)
 	GetUser(userID string) (User, bool)
+	UpdateUser(userID, nickname, bio, avatar, cover string) (User, error)
+
+	FollowUser(followerID, followeeID string) error
+	UnfollowUser(followerID, followeeID string) error
+	IsFollowing(followerID, followeeID string) bool
+	GetFollowCounts(userID string) (followers int, following int)
+	Followers(userID string, offset, limit int) ([]User, int)
+	Following(userID string, offset, limit int) ([]User, int)
+	UserComments(userID string, offset, limit int) ([]Comment, int)
 
 	Boards() []Board
 	GetBoard(boardID string) (Board, bool)
@@ -30,12 +42,12 @@ type API interface {
 	Posts(boardID string) []Post
 	GetPost(postID string) (Post, bool)
 	CreatePost(boardID, authorID, title, content, contentJSON string, tags, attachments []string) Post
-	SoftDeletePost(postID, actorUserID string) error
+	SoftDeletePost(postID, actorUserID string, isAdmin bool) error
 
 	Comments(postID string) []Comment
 	GetComment(postID, commentID string) (Comment, bool)
 	CreateComment(postID, authorID, content, contentJSON, parentID string, tags, attachments []string) Comment
-	SoftDeleteComment(postID, commentID, actorUserID string) error
+	SoftDeleteComment(postID, commentID, actorUserID string, isAdmin bool) error
 	CommentCount(postID string) int
 
 	PostScore(postID string) int
@@ -145,6 +157,7 @@ type Store struct {
 	files        map[string]FileMeta
 	messages     map[string][]ChatMessage
 	reports      []Report
+	follows      map[string]map[string]bool // map[followerID]map[followeeID]bool
 	nextUserID   int
 	nextPostID   int
 	nextComment  int
@@ -168,6 +181,7 @@ func NewStore() *Store {
 		commentVotes: map[string]map[string]int{},
 		files:        map[string]FileMeta{},
 		messages:     map[string][]ChatMessage{},
+		follows:      map[string]map[string]bool{},
 	}
 }
 
@@ -202,6 +216,174 @@ func (s *Store) GetUser(userID string) (User, bool) {
 
 	user, ok := s.users[userID]
 	return user, ok
+}
+
+// UpdateUser updates user profile fields.
+func (s *Store) UpdateUser(userID, nickname, bio, avatar, cover string) (User, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	user, ok := s.users[userID]
+	if !ok {
+		return User{}, ErrNotFound
+	}
+
+	if strings.TrimSpace(nickname) != "" {
+		user.Nickname = nickname
+	}
+	user.Bio = bio
+	user.Avatar = avatar
+	user.Cover = cover
+
+	s.users[userID] = user
+	return user, nil
+}
+
+func (s *Store) FollowUser(followerID, followeeID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if followerID == followeeID {
+		return ErrInvalidInput
+	}
+	if _, ok := s.users[followerID]; !ok {
+		return ErrNotFound
+	}
+	if _, ok := s.users[followeeID]; !ok {
+		return ErrNotFound
+	}
+
+	if s.follows[followerID] == nil {
+		s.follows[followerID] = make(map[string]bool)
+	}
+	s.follows[followerID][followeeID] = true
+	return nil
+}
+
+func (s *Store) UnfollowUser(followerID, followeeID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.follows[followerID] != nil {
+		delete(s.follows[followerID], followeeID)
+	}
+	return nil
+}
+
+func (s *Store) IsFollowing(followerID, followeeID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.follows[followerID] == nil {
+		return false
+	}
+	return s.follows[followerID][followeeID]
+}
+
+func (s *Store) GetFollowCounts(userID string) (int, int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	following := 0
+	if f, ok := s.follows[userID]; ok {
+		following = len(f)
+	}
+
+	followers := 0
+	for _, f := range s.follows {
+		if f[userID] {
+			followers++
+		}
+	}
+	return followers, following
+}
+
+func (s *Store) Followers(userID string, offset, limit int) ([]User, int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	followers := make([]User, 0)
+	for followerID, followees := range s.follows {
+		if followees[userID] {
+			if user, ok := s.users[followerID]; ok {
+				followers = append(followers, user)
+			}
+		}
+	}
+
+	total := len(followers)
+	if offset < 0 {
+		offset = 0
+	}
+	if limit <= 0 {
+		limit = total
+	}
+	end := offset + limit
+	if end > total {
+		end = total
+	}
+	if offset > end {
+		offset = end
+	}
+	return followers[offset:end], total
+}
+
+func (s *Store) Following(userID string, offset, limit int) ([]User, int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	following := make([]User, 0)
+	if followees, ok := s.follows[userID]; ok {
+		for followeeID := range followees {
+			if user, ok := s.users[followeeID]; ok {
+				following = append(following, user)
+			}
+		}
+	}
+
+	total := len(following)
+	if offset < 0 {
+		offset = 0
+	}
+	if limit <= 0 {
+		limit = total
+	}
+	end := offset + limit
+	if end > total {
+		end = total
+	}
+	if offset > end {
+		offset = end
+	}
+	return following[offset:end], total
+}
+
+func (s *Store) UserComments(userID string, offset, limit int) ([]Comment, int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	comments := make([]Comment, 0)
+	for _, comment := range s.comments {
+		if comment.AuthorID == userID && comment.DeletedAt == "" {
+			comments = append(comments, comment)
+		}
+	}
+
+	total := len(comments)
+	if offset < 0 {
+		offset = 0
+	}
+	if limit <= 0 {
+		limit = total
+	}
+	end := offset + limit
+	if end > total {
+		end = total
+	}
+	if offset > end {
+		offset = end
+	}
+	return comments[offset:end], total
 }
 
 // Boards returns the list of boards.
@@ -290,7 +472,7 @@ func (s *Store) CreatePost(boardID, authorID, title, content, contentJSON string
 }
 
 // SoftDeletePost marks a post as deleted. Only the post author can delete it in the demo.
-func (s *Store) SoftDeletePost(postID, actorUserID string) error {
+func (s *Store) SoftDeletePost(postID, actorUserID string, isAdmin bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -301,7 +483,7 @@ func (s *Store) SoftDeletePost(postID, actorUserID string) error {
 		if post.DeletedAt != "" {
 			return ErrNotFound
 		}
-		if post.AuthorID != actorUserID {
+		if !isAdmin && post.AuthorID != actorUserID {
 			return ErrForbidden
 		}
 		post.DeletedAt = now()
@@ -364,7 +546,7 @@ func (s *Store) CreateComment(postID, authorID, content, contentJSON, parentID s
 }
 
 // SoftDeleteComment marks a comment as deleted. Only the comment author can delete it in the demo.
-func (s *Store) SoftDeleteComment(postID, commentID, actorUserID string) error {
+func (s *Store) SoftDeleteComment(postID, commentID, actorUserID string, isAdmin bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -375,7 +557,7 @@ func (s *Store) SoftDeleteComment(postID, commentID, actorUserID string) error {
 		if comment.DeletedAt != "" {
 			return ErrNotFound
 		}
-		if comment.AuthorID != actorUserID {
+		if !isAdmin && comment.AuthorID != actorUserID {
 			return ErrForbidden
 		}
 		comment.DeletedAt = now()

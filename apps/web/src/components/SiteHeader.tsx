@@ -154,6 +154,7 @@ const SiteHeader = () => {
             <Dropdown menu={{ items: userMenu }} placement="bottomRight" arrow>
               <Space style={{ cursor: 'pointer', marginLeft: 8 }}>
                 <Avatar 
+                  src={user.avatar}
                   style={{ backgroundColor: token.colorPrimary }} 
                   icon={<UserOutlined />} 
                 >

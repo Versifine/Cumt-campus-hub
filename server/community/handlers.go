@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/netip"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -172,6 +173,7 @@ func (h *Handler) listPosts(w http.ResponseWriter, r *http.Request) {
 			Author: userSummary{
 				ID:       author.ID,
 				Nickname: author.Nickname,
+				Avatar:   author.Avatar,
 			},
 			Board:     boardInfo,
 			CreatedAt: post.CreatedAt,
@@ -291,6 +293,7 @@ func (h *Handler) listComments(w http.ResponseWriter, r *http.Request, postID st
 			Author: userSummary{
 				ID:       author.ID,
 				Nickname: author.Nickname,
+				Avatar:   author.Avatar,
 			},
 			Content:     comment.Content,
 			ContentJSON: safeJSON(comment.ContentJSON),
@@ -442,6 +445,7 @@ func (h *Handler) getPost(w http.ResponseWriter, r *http.Request, postID string)
 		Author: map[string]any{
 			"id":       author.ID,
 			"nickname": author.Nickname,
+			"avatar":   author.Avatar,
 		},
 		Title:        post.Title,
 		Content:      post.Content,
@@ -464,7 +468,7 @@ func (h *Handler) deletePost(w http.ResponseWriter, r *http.Request, postID stri
 		return
 	}
 
-	if err := h.Store.SoftDeletePost(postID, user.ID); err != nil {
+	if err := h.Store.SoftDeletePost(postID, user.ID, isAdmin(user)); err != nil {
 		switch err {
 		case store.ErrNotFound:
 			transport.WriteError(w, http.StatusNotFound, 2001, "not found")
@@ -485,7 +489,7 @@ func (h *Handler) deleteComment(w http.ResponseWriter, r *http.Request, postID, 
 		return
 	}
 
-	if err := h.Store.SoftDeleteComment(postID, commentID, user.ID); err != nil {
+	if err := h.Store.SoftDeleteComment(postID, commentID, user.ID, isAdmin(user)); err != nil {
 		switch err {
 		case store.ErrNotFound:
 			transport.WriteError(w, http.StatusNotFound, 2001, "not found")
@@ -643,6 +647,23 @@ func (h *Handler) allowWrite(limiter *ratelimit.FixedWindow, r *http.Request, us
 	return true
 }
 
+func isAdmin(user store.User) bool {
+	raw := strings.TrimSpace(os.Getenv("ADMIN_ACCOUNTS"))
+	if raw == "" {
+		return false
+	}
+	parts := strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || r == ';' || r == ' ' || r == '\t' || r == '\n' })
+	for _, part := range parts {
+		if strings.TrimSpace(part) == "" {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(part), user.Nickname) {
+			return true
+		}
+	}
+	return false
+}
+
 func clientIP(r *http.Request) string {
 	forwarded := strings.TrimSpace(r.Header.Get("X-Forwarded-For"))
 	if forwarded != "" {
@@ -716,6 +737,7 @@ type commentItem struct {
 type userSummary struct {
 	ID       string `json:"id"`
 	Nickname string `json:"nickname"`
+	Avatar   string `json:"avatar"`
 }
 
 func normalizeAttachmentIDs(ids []string) []string {

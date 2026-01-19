@@ -1,8 +1,9 @@
-﻿import { apiRequest } from './client'
+import { apiRequest } from './client'
 
 export type PostAuthor = {
   id: string
   nickname: string
+  avatar_url?: string
 }
 
 export type AttachmentItem = {

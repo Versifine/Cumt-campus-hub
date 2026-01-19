@@ -3,6 +3,7 @@
 Thumbs.db
 ehthumbs.db
 Desktop.ini
+*.stackdump
 
 # ===== 编辑器 / IDE =====
 .vscode/*
@@ -22,6 +23,8 @@ Desktop.ini
 *.swo
 *.bak
 *~
+*.orig
+*.[0-9]*[0-9]
 
 # ===== 依赖与构建产物（如后续引入）=====
 node_modules/
@@ -35,13 +38,15 @@ coverage/
 # ===== TypeScript / JS =====
 *.tsbuildinfo
 
-# ===== Go（如后续引入）=====
+# ===== Go =====
 bin/
 *.exe
 *.dll
 *.so
 *.dylib
 *.test
+server/server
+server/*.exe
 
 # ===== Python（如后续引入）=====
 __pycache__/
