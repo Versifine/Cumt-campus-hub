@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { 
   Layout, 
@@ -23,7 +23,8 @@ import {
   ShareAltOutlined,
   MoreOutlined,
   UserOutlined,
-  MessageOutlined
+  MessageOutlined,
+  WarningOutlined
 } from '@ant-design/icons'
 import { getErrorMessage } from '../api/client'
 import { uploadInlineImage } from '../api/uploads'
@@ -43,6 +44,7 @@ import {
 import { RichContent, RichEditor, type RichEditorHandle, type RichEditorValue } from '../components/rich-editor'
 import SiteHeader from '../components/SiteHeader'
 import { ErrorState } from '../components/StateBlocks'
+import ReportModal from '../components/ReportModal'
 import { useAuth } from '../context/AuthContext'
 import { extractMediaFromContent, normalizeMediaFromAttachments } from '../utils/media'
 import { clearDraft, loadDraft, saveDraft } from '../utils/drafts'
@@ -242,6 +244,17 @@ const PostPlaceholder = () => {
   const [commentScores, setCommentScores] = useState<Record<string, number>>({})
   const [commentVotePending, setCommentVotePending] = useState<Record<string, boolean>>({})
 
+  // Report Modal State
+  const [reportModal, setReportModal] = useState<{
+    visible: boolean
+    targetType: 'post' | 'comment'
+    targetId: string
+  }>({
+    visible: false,
+    targetType: 'post',
+    targetId: '',
+  })
+
   const threadedComments = useMemo(() => buildCommentTree(commentsState.data), [commentsState.data])
 
   // Media calculations
@@ -373,6 +386,18 @@ const PostPlaceholder = () => {
     }
   }
 
+  const handleOpenReport = (type: 'post' | 'comment', id: string) => {
+    if (!user) {
+      message.info('请先登录')
+      return
+    }
+    setReportModal({
+      visible: true,
+      targetType: type,
+      targetId: id,
+    })
+  }
+
   const renderCommentNode = (item: ThreadedComment) => {
     const isSelf = user && item.author.id === user.id
     const isOP = state.data && item.author.id === state.data.author.id
@@ -385,7 +410,7 @@ const PostPlaceholder = () => {
           {/* Left Column: Avatar & Thread Line */}
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
             <Avatar 
-              src={item.author.avatar_url} 
+              src={item.author.avatar_url ?? (item.author as any).avatar} 
               icon={<UserOutlined />} 
               size={28}
               style={{ backgroundColor: isOP ? token.colorPrimary : undefined, flexShrink: 0 }}
@@ -460,6 +485,16 @@ const PostPlaceholder = () => {
                   <Button type="text" danger size="small" style={{ fontSize: '0.8rem', padding: '0 8px' }}>Delete</Button>
                 </Popconfirm>
               )}
+              {!isSelf && (
+                <Button 
+                  type="text" 
+                  size="small" 
+                  style={{ color: token.colorTextDescription, fontSize: '0.8rem', padding: '0 8px' }}
+                  onClick={() => handleOpenReport('comment', item.id)}
+                >
+                  举报
+                </Button>
+              )}
             </Space>
 
             {/* Inline Reply Form */}
@@ -506,19 +541,34 @@ const PostPlaceholder = () => {
             style={{ borderRadius: 12, boxShadow: '0 4px 12px rgba(0,0,0,0.05)' }}
             bodyStyle={{ padding: '24px 32px' }}
           >
-            {/* Header */}
+             {/* Header */}
             <div style={{ marginBottom: 20 }}>
                <Space align="start" style={{ width: '100%', justifyContent: 'space-between' }}>
                  <Title level={3} style={{ margin: 0 }}>{state.data.title}</Title>
-                 {user && state.data.author.id === user.id && (
-                   <Dropdown menu={{ items: [{ key: 'del', label: '删除帖子', danger: true, onClick: handleDeletePost }] }}>
-                     <Button type="text" icon={<MoreOutlined />} />
-                   </Dropdown>
-                 )}
+                 <Dropdown 
+                   menu={{ 
+                     items: [
+                       ...(user && state.data.author.id === user.id ? [{ 
+                         key: 'del', 
+                         label: '删除帖子', 
+                         danger: true, 
+                         onClick: handleDeletePost 
+                       }] : []),
+                       ...(user && state.data.author.id !== user.id ? [{
+                         key: 'report',
+                         label: '举报帖子',
+                         icon: <WarningOutlined />,
+                         onClick: () => handleOpenReport('post', state.data!.id)
+                       }] : [])
+                     ] 
+                   }}
+                 >
+                   <Button type="text" icon={<MoreOutlined />} />
+                 </Dropdown>
                </Space>
                
-               <Space style={{ marginTop: 12 }}>
-                 <Avatar src={state.data.author.avatar_url} icon={<UserOutlined />} />
+                <Space style={{ marginTop: 12 }}>
+                  <Avatar src={state.data.author.avatar_url ?? (state.data.author as any).avatar} icon={<UserOutlined />} />
                  <Text strong>{state.data.author.nickname}</Text>
                  <Text type="secondary">· {formatRelativeTimeUTC8(state.data.created_at)}</Text>
                  <Tag>{state.data.board?.name}</Tag>
@@ -605,6 +655,13 @@ const PostPlaceholder = () => {
             </div>
           </Card>
         )}
+        {/* Report Modal */}
+        <ReportModal
+          visible={reportModal.visible}
+          targetType={reportModal.targetType}
+          targetId={reportModal.targetId}
+          onClose={() => setReportModal(prev => ({ ...prev, visible: false }))}
+        />
       </Content>
     </Layout>
   )

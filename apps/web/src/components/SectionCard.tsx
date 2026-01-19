@@ -7,6 +7,7 @@ type SectionCardProps = {
   actions?: ReactNode
   className?: string
   loading?: boolean
+  style?: React.CSSProperties
 }
 
 const SectionCard = ({
@@ -15,6 +16,7 @@ const SectionCard = ({
   actions,
   className,
   loading = false,
+  style,
 }: SectionCardProps) => {
   return (
     <Card
@@ -26,7 +28,8 @@ const SectionCard = ({
       style={{ 
         borderRadius: 12, 
         boxShadow: '0 4px 12px rgba(0,0,0,0.05)',
-        background: 'rgba(255,255,255,0.95)' 
+        background: 'rgba(255,255,255,0.95)',
+        ...style
       }}
       headStyle={{
         borderBottom: '1px solid rgba(0,0,0,0.06)',

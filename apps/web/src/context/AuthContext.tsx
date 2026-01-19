@@ -1,4 +1,4 @@
-﻿import {
+import {
   createContext,
   useContext,
   useEffect,
@@ -38,7 +38,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
     fetchCurrentUser()
       .then((profile) => {
-        const nextUser = { id: profile.id, nickname: profile.nickname }
+        const nextUser = { 
+          id: profile.id, 
+          nickname: profile.nickname,
+          avatar: profile.avatar,
+        }
         setUser(nextUser)
         setStoredUser(nextUser)
       })
@@ -49,6 +53,17 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       .finally(() => {
         setChecking(false)
       })
+  }, [])
+
+  useEffect(() => {
+    const handler = () => {
+      clearAuth()
+      setUser(null)
+      setChecking(false)
+    }
+
+    window.addEventListener('auth:invalid', handler)
+    return () => window.removeEventListener('auth:invalid', handler)
   }, [])
 
   const logout = () => {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type MouseEvent } from 'react'
+import { useEffect, useState, type MouseEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { 
   Card, 
@@ -23,7 +23,8 @@ import {
   MoreOutlined, 
   UserOutlined,
   LeftOutlined,
-  RightOutlined
+  RightOutlined,
+  WarningOutlined
 } from '@ant-design/icons'
 import type { AttachmentItem, PostItem } from '../api/posts'
 import { clearVote, votePost } from '../api/posts'
@@ -31,6 +32,7 @@ import { getErrorMessage } from '../api/client'
 import { useAuth } from '../context/AuthContext'
 import { formatRelativeTimeUTC8 } from '../utils/time'
 import { extractMediaFromContent, type MediaItem } from '../utils/media'
+import ReportModal from './ReportModal'
 
 const { Text, Title, Paragraph } = Typography
 
@@ -76,7 +78,7 @@ const PostCard = ({ post }: PostCardProps) => {
   
   const timeLabel = formatRelativeTimeUTC8(post.created_at)
   const boardName = getBoardName(post)
-  const authorAvatar = (post.author as any).avatar_url ?? null
+  const authorAvatar = (post.author as any).avatar_url ?? (post.author as any).avatar ?? null
   const commentCount = (post as any).comment_count ?? (post as any).comments ?? 0
   
   const content = post.content?.trim()
@@ -103,6 +105,7 @@ const PostCard = ({ post }: PostCardProps) => {
   const [vote, setVote] = useState<VoteState>(normalizeVote(post.my_vote))
   const [score, setScore] = useState(post.score ?? 0)
   const [pending, setPending] = useState(false)
+  const [reportVisible, setReportVisible] = useState(false)
 
   useEffect(() => {
     setVote(normalizeVote(post.my_vote))
@@ -143,6 +146,14 @@ const PostCard = ({ post }: PostCardProps) => {
     }
   }
 
+  const handleReport = () => {
+    if (!user) {
+      message.info('请先登录')
+      return
+    }
+    setReportVisible(true)
+  }
+
   const images = mediaItems.filter(m => m.type === 'image')
 
   return (
@@ -170,9 +181,24 @@ const PostCard = ({ post }: PostCardProps) => {
           </div>
         </Space>
         
-        <Dropdown menu={{ items: [{ key: 'report', label: '举报' }] }} trigger={['click']}>
-           <Button type="text" icon={<MoreOutlined />} onClick={(e) => e.stopPropagation()} />
-        </Dropdown>
+        {user && post.author.id !== user.id && (
+          <Dropdown 
+            menu={{ 
+              items: [{ 
+                key: 'report', 
+                label: '举报', 
+                icon: <WarningOutlined />,
+                onClick: (e) => {
+                  e.domEvent.stopPropagation()
+                  handleReport()
+                }
+              }] 
+            }} 
+            trigger={['click']}
+          >
+             <Button type="text" icon={<MoreOutlined />} onClick={(e) => e.stopPropagation()} />
+          </Dropdown>
+        )}
       </div>
 
       {/* Content */}
@@ -255,6 +281,13 @@ const PostCard = ({ post }: PostCardProps) => {
           分享
         </Button>
       </div>
+      
+      <ReportModal
+        visible={reportVisible}
+        targetType="post"
+        targetId={post.id}
+        onClose={() => setReportVisible(false)}
+      />
     </Card>
   )
 }

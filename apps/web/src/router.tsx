@@ -1,4 +1,4 @@
-﻿import { createBrowserRouter } from 'react-router-dom'
+import { createBrowserRouter } from 'react-router-dom'
 import RequireAuth from './components/RequireAuth'
 import Chat from './pages/Chat'
 import Home from './pages/Home'
@@ -7,6 +7,7 @@ import PostPlaceholder from './pages/PostPlaceholder'
 import Resources from './pages/Resources'
 import Submit from './pages/Submit'
 import UserProfile from './pages/UserProfile'
+import Admin from './pages/Admin'
 
 const router = createBrowserRouter([
   {
@@ -48,6 +49,14 @@ const router = createBrowserRouter([
   {
     path: '/u/:id',
     element: <UserProfile />,
+  },
+  {
+    path: '/admin',
+    element: (
+      <RequireAuth>
+        <Admin />
+      </RequireAuth>
+    ),
   },
 ])
 

@@ -72,6 +72,9 @@ func (s *SQLiteStore) migrate() error {
 			seq INTEGER NOT NULL,
 			id TEXT PRIMARY KEY,
 			nickname TEXT NOT NULL,
+			avatar TEXT NOT NULL DEFAULT '',
+			cover TEXT NOT NULL DEFAULT '',
+			bio TEXT NOT NULL DEFAULT '',
 			created_at TEXT NOT NULL
 		);`,
 		`CREATE TABLE IF NOT EXISTS accounts (
@@ -174,10 +177,35 @@ func (s *SQLiteStore) migrate() error {
 			updated_at TEXT NOT NULL
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_reports_status_seq ON reports(status, seq);`,
+
+		`CREATE TABLE IF NOT EXISTS follows (
+			follower_id TEXT NOT NULL,
+			followee_id TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			PRIMARY KEY (follower_id, followee_id)
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_follows_followee ON follows(followee_id);`,
 	}
 
 	for _, stmt := range stmts {
 		if _, err := s.db.Exec(stmt); err != nil {
+			return err
+		}
+	}
+
+	// Backward compatible migration for users table: add profile columns
+	if _, err := s.db.Exec(`ALTER TABLE users ADD COLUMN avatar TEXT NOT NULL DEFAULT '';`); err != nil {
+		if !isSQLiteDuplicateColumnError(err) {
+			return err
+		}
+	}
+	if _, err := s.db.Exec(`ALTER TABLE users ADD COLUMN cover TEXT NOT NULL DEFAULT '';`); err != nil {
+		if !isSQLiteDuplicateColumnError(err) {
+			return err
+		}
+	}
+	if _, err := s.db.Exec(`ALTER TABLE users ADD COLUMN bio TEXT NOT NULL DEFAULT '';`); err != nil {
+		if !isSQLiteDuplicateColumnError(err) {
 			return err
 		}
 	}
@@ -406,7 +434,7 @@ func (s *SQLiteStore) Register(account, password string) (string, User, error) {
 		}
 
 		if _, err := tx.Exec(
-			`INSERT INTO users(seq, id, nickname, created_at) VALUES(?, ?, ?, ?);`,
+			`INSERT INTO users(seq, id, nickname, created_at, avatar, cover, bio) VALUES(?, ?, ?, ?, '', '', '');`,
 			seq,
 			user.ID,
 			user.Nickname,
@@ -430,8 +458,8 @@ func (s *SQLiteStore) Register(account, password string) (string, User, error) {
 		if _, err := tx.Exec(`UPDATE accounts SET password_hash = ? WHERE account = ?;`, passwordHash, trimmedAccount); err != nil {
 			return "", User{}, err
 		}
-		if err := tx.QueryRow(`SELECT id, nickname, created_at FROM users WHERE id = ?;`, userID).
-			Scan(&user.ID, &user.Nickname, &user.CreatedAt); err != nil {
+		if err := tx.QueryRow(`SELECT id, nickname, created_at, avatar, cover, bio FROM users WHERE id = ?;`, userID).
+			Scan(&user.ID, &user.Nickname, &user.CreatedAt, &user.Avatar, &user.Cover, &user.Bio); err != nil {
 			return "", User{}, err
 		}
 	}
@@ -465,12 +493,12 @@ func (s *SQLiteStore) Login(account, password string) (string, User, error) {
 		passwordHash sql.NullString
 	)
 	err = tx.QueryRow(
-		`SELECT u.id, u.nickname, u.created_at, a.password_hash
+		`SELECT u.id, u.nickname, u.created_at, u.avatar, u.cover, u.bio, a.password_hash
 		 FROM accounts a
 		 JOIN users u ON u.id = a.user_id
 		 WHERE a.account = ?;`,
 		trimmedAccount,
-	).Scan(&user.ID, &user.Nickname, &user.CreatedAt, &passwordHash)
+	).Scan(&user.ID, &user.Nickname, &user.CreatedAt, &user.Avatar, &user.Cover, &user.Bio, &passwordHash)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", User{}, ErrInvalidCredentials
 	}
@@ -496,12 +524,12 @@ func (s *SQLiteStore) Login(account, password string) (string, User, error) {
 func (s *SQLiteStore) UserByToken(token string) (User, bool) {
 	var user User
 	err := s.db.QueryRow(
-		`SELECT u.id, u.nickname, u.created_at
+		`SELECT u.id, u.nickname, u.created_at, u.avatar, u.cover, u.bio
 		 FROM users u
 		 JOIN tokens t ON t.user_id = u.id
 		 WHERE t.token = ?;`,
 		token,
-	).Scan(&user.ID, &user.Nickname, &user.CreatedAt)
+	).Scan(&user.ID, &user.Nickname, &user.CreatedAt, &user.Avatar, &user.Cover, &user.Bio)
 	if err != nil {
 		return User{}, false
 	}
@@ -510,11 +538,69 @@ func (s *SQLiteStore) UserByToken(token string) (User, bool) {
 
 func (s *SQLiteStore) GetUser(userID string) (User, bool) {
 	var user User
-	if err := s.db.QueryRow(`SELECT id, nickname, created_at FROM users WHERE id = ?;`, userID).
-		Scan(&user.ID, &user.Nickname, &user.CreatedAt); err != nil {
+	if err := s.db.QueryRow(`SELECT id, nickname, created_at, avatar, cover, bio FROM users WHERE id = ?;`, userID).
+		Scan(&user.ID, &user.Nickname, &user.CreatedAt, &user.Avatar, &user.Cover, &user.Bio); err != nil {
 		return User{}, false
 	}
 	return user, true
+}
+
+func (s *SQLiteStore) UpdateUser(userID, nickname, bio, avatar, cover string) (User, error) {
+	trimmedID := strings.TrimSpace(userID)
+	if trimmedID == "" {
+		return User{}, ErrInvalidInput
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return User{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// If fields are empty, we might want to keep existing values or allow clearing them.
+	// For simplicity, let's assume the caller sends the full desired state,
+	// OR we only update non-empty fields?
+	// Usually standard UPDATE API expects full replacement or PATCH semantics.
+	// Let's implement partial update logic: only update fields that are provided (or if we explicitly want to support clearing, we need a better protocol).
+	// For MVP: The frontend will likely send the current values if not changed.
+	// But to be safe and robust, let's fetch current first.
+
+	var user User
+	if err := tx.QueryRow(`SELECT id, nickname, created_at, avatar, cover, bio FROM users WHERE id = ?;`, trimmedID).
+		Scan(&user.ID, &user.Nickname, &user.CreatedAt, &user.Avatar, &user.Cover, &user.Bio); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return User{}, ErrNotFound
+		}
+		return User{}, err
+	}
+
+	newNickname := strings.TrimSpace(nickname)
+	if newNickname != "" {
+		user.Nickname = newNickname
+	}
+	// Bio, Avatar, Cover can be empty strings (clearing them) or new values.
+	// However, if the caller sends empty string, does it mean "no change" or "clear"?
+	// A common pattern in Go/REST is to treat empty string as "no change" unless a special flag is set,
+	// OR, for a simple MVP, we can assume the frontend sends the *complete* new state.
+	// Let's assume the frontend sends the NEW state for everything.
+	// If the frontend wants to keep the old value, it sends the old value.
+	// We only protect Nickname from being empty.
+
+	user.Bio = bio // Allow empty
+	user.Avatar = avatar
+	user.Cover = cover
+
+	if _, err := tx.Exec(
+		`UPDATE users SET nickname = ?, bio = ?, avatar = ?, cover = ? WHERE id = ?;`,
+		user.Nickname, user.Bio, user.Avatar, user.Cover, user.ID,
+	); err != nil {
+		return User{}, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return User{}, err
+	}
+	return user, nil
 }
 
 func (s *SQLiteStore) Boards() []Board {
@@ -659,7 +745,7 @@ func (s *SQLiteStore) CreatePost(boardID, authorID, title, content, contentJSON 
 	return post
 }
 
-func (s *SQLiteStore) SoftDeletePost(postID, actorUserID string) error {
+func (s *SQLiteStore) SoftDeletePost(postID, actorUserID string, isAdmin bool) error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
@@ -678,7 +764,7 @@ func (s *SQLiteStore) SoftDeletePost(postID, actorUserID string) error {
 	if strings.TrimSpace(deletedAt.String) != "" {
 		return ErrNotFound
 	}
-	if authorID != actorUserID {
+	if !isAdmin && authorID != actorUserID {
 		return ErrForbidden
 	}
 
@@ -843,7 +929,7 @@ func (s *SQLiteStore) CreateComment(postID, authorID, content, contentJSON, pare
 	return comment
 }
 
-func (s *SQLiteStore) SoftDeleteComment(postID, commentID, actorUserID string) error {
+func (s *SQLiteStore) SoftDeleteComment(postID, commentID, actorUserID string, isAdmin bool) error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
@@ -868,7 +954,7 @@ func (s *SQLiteStore) SoftDeleteComment(postID, commentID, actorUserID string) e
 	if strings.TrimSpace(deletedAt.String) != "" {
 		return ErrNotFound
 	}
-	if authorID != actorUserID {
+	if !isAdmin && authorID != actorUserID {
 		return ErrForbidden
 	}
 
@@ -1406,6 +1492,187 @@ func (s *SQLiteStore) UpdateReport(reportID, status, action, note, handledBy str
 		return Report{}, err
 	}
 	return r, nil
+}
+
+func (s *SQLiteStore) FollowUser(followerID, followeeID string) error {
+	if followerID == followeeID {
+		return ErrInvalidInput
+	}
+
+	_, err := s.db.Exec(
+		`INSERT OR IGNORE INTO follows (follower_id, followee_id, created_at) VALUES (?, ?, ?);`,
+		followerID, followeeID, nowRFC3339(),
+	)
+	return err
+}
+
+func (s *SQLiteStore) UnfollowUser(followerID, followeeID string) error {
+	_, err := s.db.Exec(
+		`DELETE FROM follows WHERE follower_id = ? AND followee_id = ?;`,
+		followerID, followeeID,
+	)
+	return err
+}
+
+func (s *SQLiteStore) IsFollowing(followerID, followeeID string) bool {
+	var count int
+	err := s.db.QueryRow(
+		`SELECT COUNT(1) FROM follows WHERE follower_id = ? AND followee_id = ?;`,
+		followerID, followeeID,
+	).Scan(&count)
+	return err == nil && count > 0
+}
+
+func (s *SQLiteStore) GetFollowCounts(userID string) (int, int) {
+	var followers int
+	_ = s.db.QueryRow(`SELECT COUNT(1) FROM follows WHERE followee_id = ?;`, userID).Scan(&followers)
+
+	var following int
+	_ = s.db.QueryRow(`SELECT COUNT(1) FROM follows WHERE follower_id = ?;`, userID).Scan(&following)
+
+	return followers, following
+}
+
+func (s *SQLiteStore) Followers(userID string, offset, limit int) ([]User, int) {
+	if offset < 0 {
+		offset = 0
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+
+	var total int
+	if err := s.db.QueryRow(`SELECT COUNT(1) FROM follows WHERE followee_id = ?;`, userID).Scan(&total); err != nil {
+		return nil, 0
+	}
+
+	rows, err := s.db.Query(
+		`SELECT u.id, u.nickname, u.created_at, u.avatar, u.cover, u.bio
+		 FROM follows f
+		 JOIN users u ON u.id = f.follower_id
+		 WHERE f.followee_id = ?
+		 ORDER BY u.created_at DESC
+		 LIMIT ? OFFSET ?;`,
+		userID, limit, offset,
+	)
+	if err != nil {
+		return nil, 0
+	}
+	defer rows.Close()
+
+	out := make([]User, 0, limit)
+	for rows.Next() {
+		var user User
+		if err := rows.Scan(&user.ID, &user.Nickname, &user.CreatedAt, &user.Avatar, &user.Cover, &user.Bio); err != nil {
+			return nil, 0
+		}
+		out = append(out, user)
+	}
+	return out, total
+}
+
+func (s *SQLiteStore) Following(userID string, offset, limit int) ([]User, int) {
+	if offset < 0 {
+		offset = 0
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+
+	var total int
+	if err := s.db.QueryRow(`SELECT COUNT(1) FROM follows WHERE follower_id = ?;`, userID).Scan(&total); err != nil {
+		return nil, 0
+	}
+
+	rows, err := s.db.Query(
+		`SELECT u.id, u.nickname, u.created_at, u.avatar, u.cover, u.bio
+		 FROM follows f
+		 JOIN users u ON u.id = f.followee_id
+		 WHERE f.follower_id = ?
+		 ORDER BY u.created_at DESC
+		 LIMIT ? OFFSET ?;`,
+		userID, limit, offset,
+	)
+	if err != nil {
+		return nil, 0
+	}
+	defer rows.Close()
+
+	out := make([]User, 0, limit)
+	for rows.Next() {
+		var user User
+		if err := rows.Scan(&user.ID, &user.Nickname, &user.CreatedAt, &user.Avatar, &user.Cover, &user.Bio); err != nil {
+			return nil, 0
+		}
+		out = append(out, user)
+	}
+	return out, total
+}
+
+func (s *SQLiteStore) UserComments(userID string, offset, limit int) ([]Comment, int) {
+	if offset < 0 {
+		offset = 0
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+
+	var total int
+	if err := s.db.QueryRow(
+		`SELECT COUNT(1)
+		 FROM comments c
+		 JOIN posts p ON p.id = c.post_id
+		 WHERE c.author_id = ?
+		   AND (c.deleted_at IS NULL OR TRIM(c.deleted_at) = '')
+		   AND (p.deleted_at IS NULL OR TRIM(p.deleted_at) = '');`,
+		userID,
+	).Scan(&total); err != nil {
+		return nil, 0
+	}
+
+	rows, err := s.db.Query(
+		`SELECT c.id, c.post_id, c.parent_id, c.author_id, c.content, c.content_json, c.tags, c.attachments, c.created_at
+		 FROM comments c
+		 JOIN posts p ON p.id = c.post_id
+		 WHERE c.author_id = ?
+		   AND (c.deleted_at IS NULL OR TRIM(c.deleted_at) = '')
+		   AND (p.deleted_at IS NULL OR TRIM(p.deleted_at) = '')
+		 ORDER BY c.seq DESC
+		 LIMIT ? OFFSET ?;`,
+		userID, limit, offset,
+	)
+	if err != nil {
+		return nil, 0
+	}
+	defer rows.Close()
+
+	out := make([]Comment, 0, limit)
+	for rows.Next() {
+		var comment Comment
+		var parentID sql.NullString
+		var contentJSON sql.NullString
+		var tags sql.NullString
+		var attachments sql.NullString
+		if err := rows.Scan(
+			&comment.ID,
+			&comment.PostID,
+			&parentID,
+			&comment.AuthorID,
+			&comment.Content,
+			&contentJSON,
+			&tags,
+			&attachments,
+			&comment.CreatedAt,
+		); err != nil {
+			return nil, 0
+		}
+		comment.ParentID = strings.TrimSpace(parentID.String)
+		comment.ContentJSON = strings.TrimSpace(contentJSON.String)
+		comment.Tags = decodeTags(tags.String)
+		comment.Attachments = decodeAttachmentIDs(attachments.String)
+		out = append(out, comment)
+	}
+	return out, total
 }
 
 func max(a, b int) int {
