@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 
-	"github.com/Versifine/Cumt-cumpus-hub/server/internal/transport"
 	"github.com/Versifine/Cumt-cumpus-hub/server/store"
 )
 
@@ -42,20 +42,20 @@ var upgrader = websocket.Upgrader{
 }
 
 // ServeWS handles GET /ws/chat and upgrades the connection to WebSocket.
-func (h *Handler) ServeWS(w http.ResponseWriter, r *http.Request) {
-	token := r.URL.Query().Get("token")
+func (h *Handler) ServeWS(c *gin.Context) {
+	token := c.Query("token")
 	if token == "" {
-		transport.WriteError(w, http.StatusUnauthorized, 1001, "missing token")
+		c.JSON(http.StatusUnauthorized, gin.H{"code": 1001, "message": "missing token"})
 		return
 	}
 
 	user, ok := h.Store.UserByToken(token)
 	if !ok {
-		transport.WriteError(w, http.StatusUnauthorized, 1001, "invalid token")
+		c.JSON(http.StatusUnauthorized, gin.H{"code": 1001, "message": "invalid token"})
 		return
 	}
 
-	conn, err := upgrader.Upgrade(w, r, nil)
+	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		return
 	}

@@ -6,7 +6,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/Versifine/Cumt-cumpus-hub/server/internal/transport"
+	"github.com/gin-gonic/gin"
+
 	"github.com/Versifine/Cumt-cumpus-hub/server/store"
 )
 
@@ -35,15 +36,10 @@ type userStatsStore interface {
 }
 
 // RegisterHandler handles POST /api/v1/auth/register.
-func (s *Service) RegisterHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		transport.WriteError(w, http.StatusMethodNotAllowed, 2001, "method not allowed")
-		return
-	}
-
+func (s *Service) RegisterHandler(c *gin.Context) {
 	var req loginRequest
-	if err := transport.ReadJSON(r, &req); err != nil {
-		transport.WriteError(w, http.StatusBadRequest, 2001, "invalid json")
+	if err := c.ShouldBindJSON(&req); err != nil {
+		writeError(c, http.StatusBadRequest, 2001, "invalid json")
 		return
 	}
 
@@ -51,11 +47,11 @@ func (s *Service) RegisterHandler(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		switch err {
 		case store.ErrInvalidInput:
-			transport.WriteError(w, http.StatusBadRequest, 2001, "missing fields")
+			writeError(c, http.StatusBadRequest, 2001, "missing fields")
 		case store.ErrAccountExists:
-			transport.WriteError(w, http.StatusConflict, 1004, "account already exists")
+			writeError(c, http.StatusConflict, 1004, "account already exists")
 		default:
-			transport.WriteError(w, http.StatusInternalServerError, 5000, "server error")
+			writeError(c, http.StatusInternalServerError, 5000, "server error")
 		}
 		return
 	}
@@ -69,19 +65,14 @@ func (s *Service) RegisterHandler(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
-	transport.WriteJSON(w, http.StatusOK, resp)
+	c.JSON(http.StatusOK, resp)
 }
 
 // LoginHandler handles POST /api/v1/auth/login.
-func (s *Service) LoginHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		transport.WriteError(w, http.StatusMethodNotAllowed, 2001, "method not allowed")
-		return
-	}
-
+func (s *Service) LoginHandler(c *gin.Context) {
 	var req loginRequest
-	if err := transport.ReadJSON(r, &req); err != nil {
-		transport.WriteError(w, http.StatusBadRequest, 2001, "invalid json")
+	if err := c.ShouldBindJSON(&req); err != nil {
+		writeError(c, http.StatusBadRequest, 2001, "invalid json")
 		return
 	}
 
@@ -89,11 +80,11 @@ func (s *Service) LoginHandler(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		switch err {
 		case store.ErrInvalidInput:
-			transport.WriteError(w, http.StatusBadRequest, 2001, "missing fields")
+			writeError(c, http.StatusBadRequest, 2001, "missing fields")
 		case store.ErrInvalidCredentials:
-			transport.WriteError(w, http.StatusUnauthorized, 1003, "invalid credentials")
+			writeError(c, http.StatusUnauthorized, 1003, "invalid credentials")
 		default:
-			transport.WriteError(w, http.StatusInternalServerError, 5000, "server error")
+			writeError(c, http.StatusInternalServerError, 5000, "server error")
 		}
 		return
 	}
@@ -106,17 +97,12 @@ func (s *Service) LoginHandler(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
-	transport.WriteJSON(w, http.StatusOK, resp)
+	c.JSON(http.StatusOK, resp)
 }
 
-// MeHandler handles GET /api/v1/users/me.
-func (s *Service) MeHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		transport.WriteError(w, http.StatusMethodNotAllowed, 2001, "method not allowed")
-		return
-	}
-
-	user, ok := s.RequireUser(w, r)
+// GetMe handles GET /api/v1/users/me.
+func (s *Service) GetMe(c *gin.Context) {
+	user, ok := s.RequireUser(c)
 	if !ok {
 		return
 	}
@@ -148,105 +134,103 @@ func (s *Service) MeHandler(w http.ResponseWriter, r *http.Request) {
 		FollowingCount: following,
 	}
 
-	transport.WriteJSON(w, http.StatusOK, resp)
+	c.JSON(http.StatusOK, resp)
 }
 
-// FollowersHandler handles GET /api/v1/users/{id}/followers.
-func (s *Service) FollowersHandler(targetID string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			transport.WriteError(w, http.StatusMethodNotAllowed, 2001, "method not allowed")
-			return
-		}
+// GetFollowers handles GET /api/v1/users/{id}/followers.
+func (s *Service) GetFollowers(c *gin.Context) {
+	targetID := strings.TrimSpace(c.Param("id"))
+	if targetID == "" {
+		writeError(c, http.StatusNotFound, 2001, "not found")
+		return
+	}
 
-		page := parsePositiveInt(r.URL.Query().Get("page"), 1)
-		pageSize := parsePositiveInt(r.URL.Query().Get("page_size"), 20)
-		offset := (page - 1) * pageSize
+	page := parsePositiveInt(c.Query("page"), 1)
+	pageSize := parsePositiveInt(c.Query("page_size"), 20)
+	offset := (page - 1) * pageSize
 
-		items, total := s.Store.Followers(targetID, offset, pageSize)
-		respItems := make([]map[string]any, 0, len(items))
-		for _, u := range items {
-			respItems = append(respItems, map[string]any{
-				"id":         u.ID,
-				"nickname":   u.Nickname,
-				"avatar":     u.Avatar,
-				"bio":        u.Bio,
-				"created_at": u.CreatedAt,
-			})
-		}
-
-		transport.WriteJSON(w, http.StatusOK, map[string]any{
-			"items": respItems,
-			"total": total,
+	items, total := s.Store.Followers(targetID, offset, pageSize)
+	respItems := make([]map[string]any, 0, len(items))
+	for _, u := range items {
+		respItems = append(respItems, map[string]any{
+			"id":         u.ID,
+			"nickname":   u.Nickname,
+			"avatar":     u.Avatar,
+			"bio":        u.Bio,
+			"created_at": u.CreatedAt,
 		})
 	}
+
+	c.JSON(http.StatusOK, map[string]any{
+		"items": respItems,
+		"total": total,
+	})
 }
 
-// FollowingHandler handles GET /api/v1/users/{id}/following.
-func (s *Service) FollowingHandler(targetID string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			transport.WriteError(w, http.StatusMethodNotAllowed, 2001, "method not allowed")
-			return
-		}
+// GetFollowing handles GET /api/v1/users/{id}/following.
+func (s *Service) GetFollowing(c *gin.Context) {
+	targetID := strings.TrimSpace(c.Param("id"))
+	if targetID == "" {
+		writeError(c, http.StatusNotFound, 2001, "not found")
+		return
+	}
 
-		page := parsePositiveInt(r.URL.Query().Get("page"), 1)
-		pageSize := parsePositiveInt(r.URL.Query().Get("page_size"), 20)
-		offset := (page - 1) * pageSize
+	page := parsePositiveInt(c.Query("page"), 1)
+	pageSize := parsePositiveInt(c.Query("page_size"), 20)
+	offset := (page - 1) * pageSize
 
-		items, total := s.Store.Following(targetID, offset, pageSize)
-		respItems := make([]map[string]any, 0, len(items))
-		for _, u := range items {
-			respItems = append(respItems, map[string]any{
-				"id":         u.ID,
-				"nickname":   u.Nickname,
-				"avatar":     u.Avatar,
-				"bio":        u.Bio,
-				"created_at": u.CreatedAt,
-			})
-		}
-
-		transport.WriteJSON(w, http.StatusOK, map[string]any{
-			"items": respItems,
-			"total": total,
+	items, total := s.Store.Following(targetID, offset, pageSize)
+	respItems := make([]map[string]any, 0, len(items))
+	for _, u := range items {
+		respItems = append(respItems, map[string]any{
+			"id":         u.ID,
+			"nickname":   u.Nickname,
+			"avatar":     u.Avatar,
+			"bio":        u.Bio,
+			"created_at": u.CreatedAt,
 		})
 	}
+
+	c.JSON(http.StatusOK, map[string]any{
+		"items": respItems,
+		"total": total,
+	})
 }
 
-// UserCommentsHandler handles GET /api/v1/users/{id}/comments.
-func (s *Service) UserCommentsHandler(targetID string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			transport.WriteError(w, http.StatusMethodNotAllowed, 2001, "method not allowed")
-			return
-		}
+// GetUserComments handles GET /api/v1/users/{id}/comments.
+func (s *Service) GetUserComments(c *gin.Context) {
+	targetID := strings.TrimSpace(c.Param("id"))
+	if targetID == "" {
+		writeError(c, http.StatusNotFound, 2001, "not found")
+		return
+	}
 
-		page := parsePositiveInt(r.URL.Query().Get("page"), 1)
-		pageSize := parsePositiveInt(r.URL.Query().Get("page_size"), 20)
-		offset := (page - 1) * pageSize
+	page := parsePositiveInt(c.Query("page"), 1)
+	pageSize := parsePositiveInt(c.Query("page_size"), 20)
+	offset := (page - 1) * pageSize
 
-		items, total := s.Store.UserComments(targetID, offset, pageSize)
-		respItems := make([]map[string]any, 0, len(items))
-		for _, c := range items {
-			respItems = append(respItems, map[string]any{
-				"id":           c.ID,
-				"post_id":      c.PostID,
-				"parent_id":    c.ParentID,
-				"author_id":    c.AuthorID,
-				"content":      c.Content,
-				"content_json": json.RawMessage(c.ContentJSON),
-				"created_at":   c.CreatedAt,
-			})
-		}
-
-		transport.WriteJSON(w, http.StatusOK, map[string]any{
-			"items": respItems,
-			"total": total,
+	items, total := s.Store.UserComments(targetID, offset, pageSize)
+	respItems := make([]map[string]any, 0, len(items))
+	for _, cmt := range items {
+		respItems = append(respItems, map[string]any{
+			"id":           cmt.ID,
+			"post_id":      cmt.PostID,
+			"parent_id":    cmt.ParentID,
+			"author_id":    cmt.AuthorID,
+			"content":      cmt.Content,
+			"content_json": json.RawMessage(cmt.ContentJSON),
+			"created_at":   cmt.CreatedAt,
 		})
 	}
+
+	c.JSON(http.StatusOK, map[string]any{
+		"items": respItems,
+		"total": total,
+	})
 }
 
 func parsePositiveInt(value string, fallback int) int {
+	value = strings.TrimSpace(value)
 	if value == "" {
 		return fallback
 	}
@@ -257,60 +241,9 @@ func parsePositiveInt(value string, fallback int) int {
 	return parsed
 }
 
-// UpdateMeHandler handles PATCH /api/v1/users/me.
-func (s *Service) UpdateMeHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPatch {
-		transport.WriteError(w, http.StatusMethodNotAllowed, 2001, "method not allowed")
-		return
-	}
-
-	user, ok := s.RequireUser(w, r)
-	if !ok {
-		return
-	}
-
-	var req struct {
-		Nickname string `json:"nickname"`
-		Bio      string `json:"bio"`
-		Avatar   string `json:"avatar"`
-		Cover    string `json:"cover"`
-	}
-	if err := transport.ReadJSON(r, &req); err != nil {
-		transport.WriteError(w, http.StatusBadRequest, 2001, "invalid json")
-		return
-	}
-
-	// If fields are empty in JSON, they come as empty strings.
-	// Our store implementation currently treats empty strings as "update to empty" (except nickname).
-	// To support partial updates properly (only update what's sent), we'd need pointers in struct or map[string]any.
-	// For this MVP, let's keep it simple: Frontend MUST send current values for fields it doesn't want to change,
-	// OR we handle logic here.
-	// Let's refine the Store logic to be safer: only update if value is distinct?
-	// Actually, let's handle "fallback to existing" here in the handler for better control.
-
-	newNickname := req.Nickname
-	if strings.TrimSpace(newNickname) == "" {
-		newNickname = user.Nickname
-	}
-	// For Bio/Avatar/Cover, we trust the input. If frontend sends "", it means clear it?
-	// Or does it mean "ignore"? PATCH usually means partial update.
-	// Let's assume if it's empty, we keep original.
-	// This prevents clearing. If we want to clear, frontend might need to send a specific flag or we need a better DTO.
-	// Let's try: if field is missing in JSON -> ignore. But Go zero value is "".
-	// We can't distinguish missing vs empty string without pointers.
-	// LET'S CHANGE DTO TO POINTERS.
-
-	// Re-reading with pointers to support partial updates
-}
-
-// UpdateMeHandlerV2 with pointers for partial updates
-func (s *Service) UpdateMeHandlerV2(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPatch {
-		transport.WriteError(w, http.StatusMethodNotAllowed, 2001, "method not allowed")
-		return
-	}
-
-	user, ok := s.RequireUser(w, r)
+// UpdateMe handles PATCH /api/v1/users/me.
+func (s *Service) UpdateMe(c *gin.Context) {
+	user, ok := s.RequireUser(c)
 	if !ok {
 		return
 	}
@@ -321,8 +254,8 @@ func (s *Service) UpdateMeHandlerV2(w http.ResponseWriter, r *http.Request) {
 		Avatar   *string `json:"avatar"`
 		Cover    *string `json:"cover"`
 	}
-	if err := transport.ReadJSON(r, &req); err != nil {
-		transport.WriteError(w, http.StatusBadRequest, 2001, "invalid json")
+	if err := c.ShouldBindJSON(&req); err != nil {
+		writeError(c, http.StatusBadRequest, 2001, "invalid json")
 		return
 	}
 
@@ -347,7 +280,7 @@ func (s *Service) UpdateMeHandlerV2(w http.ResponseWriter, r *http.Request) {
 
 	updated, err := s.Store.UpdateUser(user.ID, nickname, bio, avatar, cover)
 	if err != nil {
-		transport.WriteError(w, http.StatusInternalServerError, 5000, "server error")
+		writeError(c, http.StatusInternalServerError, 5000, "server error")
 		return
 	}
 
@@ -366,142 +299,133 @@ func (s *Service) UpdateMeHandlerV2(w http.ResponseWriter, r *http.Request) {
 		Cover:     updated.Cover,
 		CreatedAt: updated.CreatedAt,
 	}
-	transport.WriteJSON(w, http.StatusOK, resp)
+	c.JSON(http.StatusOK, resp)
 }
 
-// PublicUserHandler handles GET /api/v1/users/{id}.
-func (s *Service) PublicUserHandler(userID string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			transport.WriteError(w, http.StatusMethodNotAllowed, 2001, "method not allowed")
-			return
-		}
-
-		trimmedID := strings.TrimSpace(userID)
-		if trimmedID == "" {
-			transport.WriteError(w, http.StatusNotFound, 2001, "not found")
-			return
-		}
-
-		user, ok := s.Store.GetUser(trimmedID)
-		if !ok {
-			transport.WriteError(w, http.StatusNotFound, 2001, "not found")
-			return
-		}
-
-		postsCount, commentsCount, err := s.userStats(trimmedID)
-		if err != nil {
-			transport.WriteError(w, http.StatusInternalServerError, 5000, "server error")
-			return
-		}
-
-		followers, following := s.Store.GetFollowCounts(trimmedID)
-		isFollowing := false
-		if token := bearerToken(r); token != "" {
-			if me, ok := s.Store.UserByToken(token); ok {
-				isFollowing = s.Store.IsFollowing(me.ID, trimmedID)
-			}
-		}
-
-		resp := struct {
-			ID             string `json:"id"`
-			Nickname       string `json:"nickname"`
-			Avatar         string `json:"avatar"`
-			Cover          string `json:"cover"`
-			Bio            string `json:"bio"`
-			CreatedAt      string `json:"created_at"`
-			PostsCount     int    `json:"posts_count"`
-			CommentsCount  int    `json:"comments_count"`
-			FollowersCount int    `json:"followers_count"`
-			FollowingCount int    `json:"following_count"`
-			IsFollowing    bool   `json:"is_following"`
-		}{
-			ID:             user.ID,
-			Nickname:       user.Nickname,
-			Avatar:         user.Avatar,
-			Cover:          user.Cover,
-			Bio:            user.Bio,
-			CreatedAt:      user.CreatedAt,
-			PostsCount:     postsCount,
-			CommentsCount:  commentsCount,
-			FollowersCount: followers,
-			FollowingCount: following,
-			IsFollowing:    isFollowing,
-		}
-
-		transport.WriteJSON(w, http.StatusOK, resp)
+// GetUser handles GET /api/v1/users/{id}.
+func (s *Service) GetUser(c *gin.Context) {
+	trimmedID := strings.TrimSpace(c.Param("id"))
+	if trimmedID == "" {
+		writeError(c, http.StatusNotFound, 2001, "not found")
+		return
 	}
+
+	user, ok := s.Store.GetUser(trimmedID)
+	if !ok {
+		writeError(c, http.StatusNotFound, 2001, "not found")
+		return
+	}
+
+	postsCount, commentsCount, err := s.userStats(trimmedID)
+	if err != nil {
+		writeError(c, http.StatusInternalServerError, 5000, "server error")
+		return
+	}
+
+	followers, following := s.Store.GetFollowCounts(trimmedID)
+	isFollowing := false
+	if token := bearerToken(c); token != "" {
+		if me, ok := s.Store.UserByToken(token); ok {
+			isFollowing = s.Store.IsFollowing(me.ID, trimmedID)
+		}
+	}
+
+	resp := struct {
+		ID             string `json:"id"`
+		Nickname       string `json:"nickname"`
+		Avatar         string `json:"avatar"`
+		Cover          string `json:"cover"`
+		Bio            string `json:"bio"`
+		CreatedAt      string `json:"created_at"`
+		PostsCount     int    `json:"posts_count"`
+		CommentsCount  int    `json:"comments_count"`
+		FollowersCount int    `json:"followers_count"`
+		FollowingCount int    `json:"following_count"`
+		IsFollowing    bool   `json:"is_following"`
+	}{
+		ID:             user.ID,
+		Nickname:       user.Nickname,
+		Avatar:         user.Avatar,
+		Cover:          user.Cover,
+		Bio:            user.Bio,
+		CreatedAt:      user.CreatedAt,
+		PostsCount:     postsCount,
+		CommentsCount:  commentsCount,
+		FollowersCount: followers,
+		FollowingCount: following,
+		IsFollowing:    isFollowing,
+	}
+
+	c.JSON(http.StatusOK, resp)
 }
 
-// FollowHandler handles POST /api/v1/users/{id}/follow.
-func (s *Service) FollowHandler(targetID string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			transport.WriteError(w, http.StatusMethodNotAllowed, 2001, "method not allowed")
-			return
-		}
-
-		me, ok := s.RequireUser(w, r)
-		if !ok {
-			return
-		}
-
-		if err := s.Store.FollowUser(me.ID, targetID); err != nil {
-			if err == store.ErrNotFound {
-				transport.WriteError(w, http.StatusNotFound, 2001, "user not found")
-			} else if err == store.ErrInvalidInput {
-				transport.WriteError(w, http.StatusBadRequest, 2001, "cannot follow yourself")
-			} else {
-				transport.WriteError(w, http.StatusInternalServerError, 5000, "server error")
-			}
-			return
-		}
-
-		transport.WriteJSON(w, http.StatusOK, map[string]bool{"success": true})
+// FollowUser handles POST /api/v1/users/{id}/follow.
+func (s *Service) FollowUser(c *gin.Context) {
+	targetID := strings.TrimSpace(c.Param("id"))
+	if targetID == "" {
+		writeError(c, http.StatusNotFound, 2001, "not found")
+		return
 	}
+
+	me, ok := s.RequireUser(c)
+	if !ok {
+		return
+	}
+
+	if err := s.Store.FollowUser(me.ID, targetID); err != nil {
+		if err == store.ErrNotFound {
+			writeError(c, http.StatusNotFound, 2001, "user not found")
+		} else if err == store.ErrInvalidInput {
+			writeError(c, http.StatusBadRequest, 2001, "cannot follow yourself")
+		} else {
+			writeError(c, http.StatusInternalServerError, 5000, "server error")
+		}
+		return
+	}
+
+	c.JSON(http.StatusOK, map[string]bool{"success": true})
 }
 
-// UnfollowHandler handles DELETE /api/v1/users/{id}/follow.
-func (s *Service) UnfollowHandler(targetID string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodDelete {
-			transport.WriteError(w, http.StatusMethodNotAllowed, 2001, "method not allowed")
-			return
-		}
-
-		me, ok := s.RequireUser(w, r)
-		if !ok {
-			return
-		}
-
-		if err := s.Store.UnfollowUser(me.ID, targetID); err != nil {
-			transport.WriteError(w, http.StatusInternalServerError, 5000, "server error")
-			return
-		}
-
-		transport.WriteJSON(w, http.StatusOK, map[string]bool{"success": true})
+// UnfollowUser handles DELETE /api/v1/users/{id}/follow.
+func (s *Service) UnfollowUser(c *gin.Context) {
+	targetID := strings.TrimSpace(c.Param("id"))
+	if targetID == "" {
+		writeError(c, http.StatusNotFound, 2001, "not found")
+		return
 	}
+
+	me, ok := s.RequireUser(c)
+	if !ok {
+		return
+	}
+
+	if err := s.Store.UnfollowUser(me.ID, targetID); err != nil {
+		writeError(c, http.StatusInternalServerError, 5000, "server error")
+		return
+	}
+
+	c.JSON(http.StatusOK, map[string]bool{"success": true})
 }
 
 // RequireUser extracts the Bearer token, loads the user, and writes a 401 error on failure.
-func (s *Service) RequireUser(w http.ResponseWriter, r *http.Request) (store.User, bool) {
-	token := bearerToken(r)
+func (s *Service) RequireUser(c *gin.Context) (store.User, bool) {
+	token := bearerToken(c)
 	if token == "" {
-		transport.WriteError(w, http.StatusUnauthorized, 1001, "missing token")
+		writeError(c, http.StatusUnauthorized, 1001, "missing token")
 		return store.User{}, false
 	}
 
 	user, ok := s.Store.UserByToken(token)
 	if !ok {
-		transport.WriteError(w, http.StatusUnauthorized, 1001, "invalid token")
+		writeError(c, http.StatusUnauthorized, 1001, "invalid token")
 		return store.User{}, false
 	}
 	return user, true
 }
 
 // bearerToken parses Authorization: Bearer <token>.
-func bearerToken(r *http.Request) string {
-	authHeader := strings.TrimSpace(r.Header.Get("Authorization"))
+func bearerToken(c *gin.Context) string {
+	authHeader := strings.TrimSpace(c.GetHeader("Authorization"))
 	if authHeader == "" {
 		return ""
 	}
@@ -531,4 +455,8 @@ func (s *Service) userStats(userID string) (int, int, error) {
 		}
 	}
 	return postsCount, commentsCount, nil
+}
+
+func writeError(c *gin.Context, status int, code int, message string) {
+	c.JSON(status, gin.H{"code": code, "message": message})
 }
