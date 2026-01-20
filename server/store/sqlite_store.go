@@ -652,10 +652,10 @@ func (s *SQLiteStore) Posts(boardID string) []Post {
 	)
 	if boardID == "" {
 		rows, err = s.db.Query(
-			`SELECT id, board_id, author_id, title, content, content_json, tags, attachments, created_at
-			 FROM posts
-			 WHERE deleted_at IS NULL OR TRIM(deleted_at) = ''
-			 ORDER BY seq ASC;`,
+		`SELECT id, board_id, author_id, title, content, content_json, tags, attachments, created_at
+		 FROM posts
+		 WHERE deleted_at IS NULL OR TRIM(deleted_at) = ''
+		 ORDER BY seq DESC;`,
 		)
 	} else {
 		rows, err = s.db.Query(
@@ -663,7 +663,7 @@ func (s *SQLiteStore) Posts(boardID string) []Post {
 			 FROM posts
 			 WHERE board_id = ?
 			   AND (deleted_at IS NULL OR TRIM(deleted_at) = '')
-			 ORDER BY seq ASC;`,
+			 ORDER BY seq DESC;`,
 			boardID,
 		)
 	}
@@ -794,7 +794,7 @@ func (s *SQLiteStore) Comments(postID string) []Comment {
 		 FROM comments
 		 WHERE post_id = ?
 		   AND (deleted_at IS NULL OR TRIM(deleted_at) = '')
-		 ORDER BY seq ASC;`,
+		 ORDER BY seq DESC;`,
 		postID,
 	)
 	if err != nil {

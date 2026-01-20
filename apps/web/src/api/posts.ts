@@ -128,6 +128,7 @@ export const fetchPosts = (
   page: number,
   pageSize: number,
   boardId?: string,
+  authorId?: string,
 ): Promise<PostListResponse> => {
   const params = new URLSearchParams({
     page: String(page),
@@ -136,6 +137,10 @@ export const fetchPosts = (
 
   if (boardId) {
     params.set('board_id', boardId)
+  }
+
+  if (authorId) {
+    params.set('author_id', authorId)
   }
 
   return apiRequest<PostListResponse>(`/posts?${params.toString()}`)

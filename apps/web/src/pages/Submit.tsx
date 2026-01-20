@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { 
   Layout, 
@@ -10,20 +10,19 @@ import {
   Alert, 
   Typography, 
   Space,
-  message,
-  theme
+  message
 } from 'antd'
-import { fetchBoards, type Board } from '../api/boards'
 import { getErrorMessage } from '../api/client'
 import { createPost } from '../api/posts'
 import { uploadInlineImage } from '../api/uploads'
 import { RichEditor, type RichEditorHandle, type RichEditorValue } from '../components/rich-editor'
 import SiteHeader from '../components/SiteHeader'
 import { useAuth } from '../context/AuthContext'
+import { useBoards } from '../hooks/useBoards'
 import { clearDraft, loadDraft, saveDraft } from '../utils/drafts'
 
 const { Content } = Layout
-const { Title, Text } = Typography
+const { Text } = Typography
 
 const maxInlineImageSize = 100 * 1024 * 1024
 const postDraftKey = 'draft:post'
@@ -57,31 +56,19 @@ const sanitizeContentJson = (json: unknown): unknown => {
 const Submit = () => {
   const navigate = useNavigate()
   const { user } = useAuth()
-  const { token } = theme.useToken()
   const [form] = Form.useForm()
 
-  const [boards, setBoards] = useState<Board[]>([])
-  const [loading, setLoading] = useState(true)
   const [content, setContent] = useState<RichEditorValue>({ json: null, text: '' })
   const editorRef = useRef<RichEditorHandle | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
 
-  const loadBoards = useCallback(async () => {
-    setLoading(true)
-    try {
-      const data = await fetchBoards()
-      setBoards(data)
-    } catch (error) {
-      message.error(getErrorMessage(error))
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    loadBoards()
-  }, [loadBoards])
+  const {
+    data: boards = [],
+    isLoading: boardsLoading,
+    error: boardsError,
+    refetch: refetchBoards,
+  } = useBoards()
 
   // Load draft
   useEffect(() => {
@@ -188,19 +175,33 @@ const Submit = () => {
             form={form} 
             layout="vertical" 
             onFinish={handleSubmit}
-            disabled={loading || submitting}
+            disabled={boardsLoading || submitting}
           >
             <Form.Item 
               name="boardId" 
               label="版块" 
               rules={[{ required: true, message: '请选择版块' }]}
             >
-              <Select placeholder="选择版块" loading={boards.length === 0}>
+              <Select placeholder="选择版块" loading={boardsLoading}>
                 {boards.map(b => (
                   <Select.Option key={b.id} value={b.id}>{b.name}</Select.Option>
                 ))}
               </Select>
             </Form.Item>
+
+            {boardsError && (
+              <Alert
+                type="error"
+                showIcon
+                message={getErrorMessage(boardsError)}
+                action={(
+                  <Button size="small" onClick={() => void refetchBoards()}>
+                    重试
+                  </Button>
+                )}
+                style={{ marginBottom: 16 }}
+              />
+            )}
 
             <Form.Item 
               name="title" 

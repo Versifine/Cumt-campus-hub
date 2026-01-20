@@ -15,6 +15,7 @@ import {
   theme,
   Alert
 } from 'antd'
+import { useQuery } from '@tanstack/react-query'
 import { 
   LikeOutlined, 
   LikeFilled, 
@@ -46,6 +47,7 @@ import SiteHeader from '../components/SiteHeader'
 import { ErrorState } from '../components/StateBlocks'
 import ReportModal from '../components/ReportModal'
 import { useAuth } from '../context/AuthContext'
+import { useInfiniteScroll } from '../hooks/useInfiniteScroll'
 import { extractMediaFromContent, normalizeMediaFromAttachments } from '../utils/media'
 import { clearDraft, loadDraft, saveDraft } from '../utils/drafts'
 import { formatRelativeTimeUTC8 } from '../utils/time'
@@ -61,6 +63,7 @@ type LoadState<T> = {
 
 const normalizeVote = (value: number | undefined) => value === 1 ? 1 : value === -1 ? -1 : 0
 const draftKeyPrefix = 'draft:comment:'
+const commentBatchSize = 8
 
 type ThreadedComment = CommentItem & {
   children: ThreadedComment[]
@@ -87,13 +90,14 @@ const buildCommentTree = (comments: CommentItem[]) => {
     }
   })
 
-  // Sort by time
-  const sortFn = (a: ThreadedComment, b: ThreadedComment) => 
+  const sortAsc = (a: ThreadedComment, b: ThreadedComment) =>
     new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+  const sortDesc = (a: ThreadedComment, b: ThreadedComment) =>
+    new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
 
-  const sortRecursive = (nodes: ThreadedComment[]) => {
-    nodes.sort(sortFn)
-    nodes.forEach(n => sortRecursive(n.children))
+  const sortRecursive = (nodes: ThreadedComment[], depth = 0) => {
+    nodes.sort(depth === 0 ? sortDesc : sortAsc)
+    nodes.forEach(n => sortRecursive(n.children, depth + 1))
   }
 
   sortRecursive(roots)
@@ -227,11 +231,17 @@ const PostPlaceholder = () => {
     loading: true,
     error: null,
   })
-  const [commentsState, setCommentsState] = useState<LoadState<CommentItem[]>>({
-    data: [],
-    loading: true,
-    error: null,
+  const {
+    data: comments = [],
+    isLoading: commentsLoading,
+    error: commentsError,
+    refetch: refetchComments,
+  } = useQuery({
+    queryKey: ['comments', id],
+    queryFn: () => fetchComments(id ?? ''),
+    enabled: Boolean(id),
   })
+  const commentsErrorMessage = commentsError ? getErrorMessage(commentsError) : null
   
   // Active reply target ID (null means no active reply)
   const [activeReplyId, setActiveReplyId] = useState<string | null>(null)
@@ -244,6 +254,8 @@ const PostPlaceholder = () => {
   const [commentScores, setCommentScores] = useState<Record<string, number>>({})
   const [commentVotePending, setCommentVotePending] = useState<Record<string, boolean>>({})
 
+  const [visibleRootCount, setVisibleRootCount] = useState(commentBatchSize)
+
   // Report Modal State
   const [reportModal, setReportModal] = useState<{
     visible: boolean
@@ -255,7 +267,37 @@ const PostPlaceholder = () => {
     targetId: '',
   })
 
-  const threadedComments = useMemo(() => buildCommentTree(commentsState.data), [commentsState.data])
+  useEffect(() => {
+    const voteMap: Record<string, number> = {}
+    const scoreMap: Record<string, number> = {}
+    comments.forEach((comment) => {
+      voteMap[comment.id] = normalizeVote(comment.my_vote)
+      scoreMap[comment.id] = comment.score || 0
+    })
+    setCommentVotes(voteMap)
+    setCommentScores(scoreMap)
+  }, [comments])
+
+  useEffect(() => {
+    setVisibleRootCount(commentBatchSize)
+  }, [comments])
+
+  const threadedComments = useMemo(() => buildCommentTree(comments), [comments])
+  const visibleComments = useMemo(
+    () => threadedComments.slice(0, visibleRootCount),
+    [threadedComments, visibleRootCount],
+  )
+  const hasMoreComments = threadedComments.length > visibleRootCount
+
+  const handleLoadMoreComments = useCallback(() => {
+    if (!hasMoreComments) return
+    setVisibleRootCount((prev) => Math.min(prev + commentBatchSize, threadedComments.length))
+  }, [hasMoreComments, threadedComments.length])
+
+  const { ref: commentsSentinelRef, isSupported: commentsScrollSupported } = useInfiniteScroll({
+    onLoadMore: handleLoadMoreComments,
+    enabled: hasMoreComments,
+  })
 
   // Media calculations
   const postInlineMedia = useMemo(() => state.data ? extractMediaFromContent(state.data.content_json) : [], [state.data])
@@ -279,29 +321,9 @@ const PostPlaceholder = () => {
     }
   }, [id])
 
-  const loadComments = useCallback(async () => {
-    if (!id) return
-    setCommentsState(prev => ({ ...prev, loading: true }))
-    try {
-      const data = await fetchComments(id)
-      const voteMap: Record<string, number> = {}
-      const scoreMap: Record<string, number> = {}
-      data.forEach(c => {
-        voteMap[c.id] = normalizeVote(c.my_vote)
-        scoreMap[c.id] = c.score || 0
-      })
-      setCommentVotes(voteMap)
-      setCommentScores(scoreMap)
-      setCommentsState({ data, loading: false, error: null })
-    } catch (error) {
-      setCommentsState({ data: [], loading: false, error: getErrorMessage(error) })
-    }
-  }, [id])
-
   useEffect(() => {
     loadPost()
-    loadComments()
-  }, [loadPost, loadComments])
+  }, [loadPost])
 
   // Actions
   const handlePostVote = async (nextVote: number) => {
@@ -348,7 +370,7 @@ const PostPlaceholder = () => {
     })
     
     // Refresh comments and close reply box if applicable
-    await loadComments()
+    await refetchComments()
     if (parentId) {
       setActiveReplyId(null)
     }
@@ -371,7 +393,7 @@ const PostPlaceholder = () => {
     try {
       await deleteComment(id, commentId)
       message.success('已删除')
-      loadComments()
+      void refetchComments()
     } catch (e) {
       message.error(getErrorMessage(e))
     }
@@ -616,7 +638,7 @@ const PostPlaceholder = () => {
                 onClick={() => handlePostVote(-1)}
               />
               <Button type="text" size="large" icon={<MessageOutlined />}>
-                {commentsState.data.length}
+                {comments.length}
               </Button>
               <Button type="text" size="large" icon={<ShareAltOutlined />} onClick={handleShare}>
                 分享
@@ -626,7 +648,7 @@ const PostPlaceholder = () => {
             {/* Comments Section */}
             <div style={{ marginTop: 40 }}>
               <div style={{ marginBottom: 24 }}>
-                <Title level={5}>评论 ({commentsState.data.length})</Title>
+                <Title level={5}>评论 ({comments.length})</Title>
                 {/* Main Comment Form */}
                 <div style={{ marginTop: 16 }}>
                   <CommentForm
@@ -639,17 +661,30 @@ const PostPlaceholder = () => {
               </div>
 
               {/* Comment List */}
-              {commentsState.loading ? (
+              {commentsLoading ? (
                 <div style={{ padding: '32px 0', textAlign: 'center', color: token.colorTextSecondary }}>
                   Loading discussion...
                 </div>
-              ) : commentsState.data.length === 0 ? (
+              ) : commentsErrorMessage ? (
+                <ErrorState message={commentsErrorMessage} onRetry={refetchComments} />
+              ) : comments.length === 0 ? (
                 <div style={{ padding: '32px 0', textAlign: 'center', color: token.colorTextSecondary }}>
                   No comments yet. Be the first to share what you think!
                 </div>
               ) : (
                 <div style={{ marginBottom: 48 }}>
-                  {threadedComments.map((node) => renderCommentNode(node))}
+                  {visibleComments.map((node) => renderCommentNode(node))}
+                  {hasMoreComments && <div ref={commentsSentinelRef} style={{ height: 1 }} />}
+                  {!commentsScrollSupported && hasMoreComments && (
+                    <div style={{ textAlign: 'center', marginTop: 16 }}>
+                      <Button onClick={handleLoadMoreComments}>加载更多评论</Button>
+                    </div>
+                  )}
+                  {!hasMoreComments && threadedComments.length > 0 && (
+                    <div style={{ textAlign: 'center', color: token.colorTextSecondary, marginTop: 16 }}>
+                      已经到底了
+                    </div>
+                  )}
                 </div>
               )}
             </div>

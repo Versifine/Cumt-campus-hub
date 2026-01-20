@@ -19,7 +19,8 @@ import {
   List
 } from 'antd'
 import { UserOutlined, ArrowLeftOutlined } from '@ant-design/icons'
-import { fetchPosts, type PostItem } from '../api/posts'
+import { useInfiniteQuery } from '@tanstack/react-query'
+import { fetchPosts } from '../api/posts'
 import { 
   fetchCurrentUser, 
   fetchUserProfile, 
@@ -29,7 +30,6 @@ import {
   followUser, 
   unfollowUser,
   type FollowUserItem,
-  type UserCommentItem,
 } from '../api/users'
 import { getErrorMessage } from '../api/client'
 import PostCard from '../components/PostCard'
@@ -38,6 +38,7 @@ import EditProfileModal from '../components/EditProfileModal'
 import { ErrorState } from '../components/StateBlocks'
 import { PostSkeletonList } from '../components/Skeletons'
 import { useAuth } from '../context/AuthContext'
+import { useInfiniteScroll } from '../hooks/useInfiniteScroll'
 import { formatRelativeTimeUTC8 } from '../utils/time'
 
 const { Content } = Layout
@@ -74,16 +75,6 @@ const UserProfile = () => {
     loading: true,
     error: null,
   })
-  const [postsState, setPostsState] = useState<LoadState<PostItem[]>>({
-    data: [],
-    loading: true,
-    error: null,
-  })
-  const [commentsState, setCommentsState] = useState<LoadState<UserCommentItem[]>>({
-    data: [],
-    loading: false,
-    error: null,
-  })
   const [followModal, setFollowModal] = useState<{
     visible: boolean
     type: 'followers' | 'following'
@@ -101,10 +92,67 @@ const UserProfile = () => {
 
   const isSelf = Boolean(user && id && user.id === id)
 
+  const postsPageSize = 10
+  const commentsPageSize = 10
+
+  const postsQuery = useInfiniteQuery({
+    queryKey: ['user-posts', id],
+    initialPageParam: 1,
+    enabled: Boolean(id),
+    queryFn: ({ pageParam }) => fetchPosts(pageParam, postsPageSize, undefined, id),
+    getNextPageParam: (lastPage, allPages) => {
+      const loaded = allPages.reduce((sum, page) => sum + page.items.length, 0)
+      return loaded >= lastPage.total ? undefined : allPages.length + 1
+    },
+  })
+
+  const commentsQuery = useInfiniteQuery({
+    queryKey: ['user-comments', id],
+    initialPageParam: 1,
+    enabled: Boolean(id),
+    queryFn: ({ pageParam }) => fetchUserComments(id ?? '', pageParam, commentsPageSize),
+    getNextPageParam: (lastPage, allPages) => {
+      const loaded = allPages.reduce((sum, page) => sum + page.items.length, 0)
+      return loaded >= lastPage.total ? undefined : allPages.length + 1
+    },
+  })
+
+  const posts = useMemo(
+    () => postsQuery.data?.pages.flatMap((page) => page.items) ?? [],
+    [postsQuery.data],
+  )
+  const comments = useMemo(
+    () => commentsQuery.data?.pages.flatMap((page) => page.items) ?? [],
+    [commentsQuery.data],
+  )
+  const postsTotal = postsQuery.data?.pages[0]?.total ?? 0
+  const commentsTotal = commentsQuery.data?.pages[0]?.total ?? 0
+  const postsErrorMessage = postsQuery.error ? getErrorMessage(postsQuery.error) : null
+  const commentsErrorMessage = commentsQuery.error ? getErrorMessage(commentsQuery.error) : null
+
+  const handleLoadMorePosts = useCallback(() => {
+    if (!postsQuery.hasNextPage || postsQuery.isFetchingNextPage) return
+    void postsQuery.fetchNextPage()
+  }, [postsQuery])
+
+  const handleLoadMoreComments = useCallback(() => {
+    if (!commentsQuery.hasNextPage || commentsQuery.isFetchingNextPage) return
+    void commentsQuery.fetchNextPage()
+  }, [commentsQuery])
+
+  const { ref: postsSentinelRef, isSupported: postsScrollSupported } = useInfiniteScroll({
+    onLoadMore: handleLoadMorePosts,
+    enabled: activeTab === 'posts' && Boolean(postsQuery.hasNextPage),
+  })
+
+  const { ref: commentsSentinelRef, isSupported: commentsScrollSupported } = useInfiniteScroll({
+    onLoadMore: handleLoadMoreComments,
+    enabled: activeTab === 'comments' && Boolean(commentsQuery.hasNextPage),
+  })
+
   const loadProfile = useCallback(async () => {
     if (!id) return
     setProfileState(prev => ({ ...prev, loading: true }))
-    setPostsState(prev => ({ ...prev, loading: true }))
 
     try {
       // 1. Load Profile Data
@@ -133,32 +181,15 @@ const UserProfile = () => {
           createdAt: pubUser.created_at,
           followersCount: pubUser.followers_count,
           followingCount: pubUser.following_count,
+          commentsCount: pubUser.comments_count,
           isFollowing: pubUser.is_following,
         }
       }
       setProfileState({ data: profileData, loading: false, error: null })
-
-      // 2. Load Posts
-      const posts = await fetchPosts(1, 20)
-      const filtered = posts.items.filter((post) => String(post.author.id) === id)
-      setPostsState({ data: filtered, loading: false, error: null })
-
     } catch (error) {
       setProfileState(prev => ({ ...prev, loading: false, error: getErrorMessage(error) }))
-      setPostsState(prev => ({ ...prev, loading: false }))
     }
   }, [id, isSelf])
-
-  const loadCommentsList = useCallback(async () => {
-    if (!id) return
-    setCommentsState(prev => ({ ...prev, loading: true }))
-    try {
-      const res = await fetchUserComments(id, 1, 20)
-      setCommentsState({ data: res.items, loading: false, error: null })
-    } catch (error) {
-      setCommentsState({ data: [], loading: false, error: getErrorMessage(error) })
-    }
-  }, [id])
 
   const loadFollowList = useCallback(async (type: 'followers' | 'following', page = 1) => {
     if (!id) return
@@ -186,8 +217,7 @@ const UserProfile = () => {
 
   useEffect(() => {
     loadProfile()
-    loadCommentsList()
-  }, [loadProfile, loadCommentsList])
+  }, [loadProfile])
 
   const handleFollowToggle = async () => {
     if (!user) {
@@ -236,8 +266,14 @@ const UserProfile = () => {
     }
   }
 
-  const statsPosts = useMemo(() => postsState.data.length, [postsState.data.length])
-  const statsComments = useMemo(() => profileState.data?.commentsCount ?? 0, [profileState.data?.commentsCount])
+  const statsPosts = useMemo(
+    () => (postsTotal > 0 ? postsTotal : posts.length),
+    [posts.length, postsTotal],
+  )
+  const statsComments = useMemo(
+    () => (commentsTotal > 0 ? commentsTotal : profileState.data?.commentsCount ?? 0),
+    [commentsTotal, profileState.data?.commentsCount],
+  )
 
 
   return (
@@ -390,21 +426,37 @@ const UserProfile = () => {
                     label: `Posts (${statsPosts})`,
                     key: 'posts',
                     children: (
-                       <div style={{ paddingTop: 16 }}>
-                         {postsState.loading ? (
-                           <PostSkeletonList count={3} />
-                         ) : postsState.error ? (
-                           <ErrorState message={postsState.error} onRetry={loadProfile} />
-                         ) : postsState.data.length === 0 ? (
-                           <Empty description="No posts yet" />
-                         ) : (
-                           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-                             {postsState.data.map(post => (
-                               <PostCard key={post.id} post={post} />
-                             ))}
-                           </div>
-                         )}
-                       </div>
+                        <div style={{ paddingTop: 16 }}>
+                          {postsQuery.isLoading ? (
+                            <PostSkeletonList count={3} />
+                          ) : postsErrorMessage ? (
+                            <ErrorState message={postsErrorMessage} onRetry={postsQuery.refetch} />
+                          ) : posts.length === 0 ? (
+                            <Empty description="No posts yet" />
+                          ) : (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                              {posts.map(post => (
+                                <PostCard key={post.id} post={post} />
+                              ))}
+                              {postsQuery.isFetchingNextPage && (
+                                <div style={{ textAlign: 'center', color: token.colorTextSecondary }}>
+                                  Loading more...
+                                </div>
+                              )}
+                              {postsQuery.hasNextPage && <div ref={postsSentinelRef} style={{ height: 1 }} />}
+                              {!postsScrollSupported && postsQuery.hasNextPage && (
+                                <div style={{ textAlign: 'center' }}>
+                                  <Button onClick={handleLoadMorePosts}>加载更多</Button>
+                                </div>
+                              )}
+                              {!postsQuery.hasNextPage && posts.length > 0 && (
+                                <div style={{ textAlign: 'center', color: token.colorTextSecondary }}>
+                                  已经到底了
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
                     )
                   },
 
@@ -413,15 +465,15 @@ const UserProfile = () => {
                     key: 'comments',
                     children: (
                       <div style={{ paddingTop: 16 }}>
-                        {commentsState.loading ? (
+                        {commentsQuery.isLoading ? (
                           <PostSkeletonList count={2} />
-                        ) : commentsState.error ? (
-                          <ErrorState message={commentsState.error} onRetry={loadCommentsList} />
-                        ) : commentsState.data.length === 0 ? (
+                        ) : commentsErrorMessage ? (
+                          <ErrorState message={commentsErrorMessage} onRetry={commentsQuery.refetch} />
+                        ) : comments.length === 0 ? (
                           <Empty description="No comments yet" />
                         ) : (
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-                            {commentsState.data.map((comment) => (
+                            {comments.map((comment) => (
                               <Card key={comment.id} bordered style={{ borderRadius: 12 }}>
                                 <div style={{ marginBottom: 8 }}>
                                   <Typography.Text type="secondary">在帖子</Typography.Text>
@@ -441,6 +493,22 @@ const UserProfile = () => {
                                 </Typography.Text>
                               </Card>
                             ))}
+                            {commentsQuery.isFetchingNextPage && (
+                              <div style={{ textAlign: 'center', color: token.colorTextSecondary }}>
+                                Loading more...
+                              </div>
+                            )}
+                            {commentsQuery.hasNextPage && <div ref={commentsSentinelRef} style={{ height: 1 }} />}
+                            {!commentsScrollSupported && commentsQuery.hasNextPage && (
+                              <div style={{ textAlign: 'center' }}>
+                                <Button onClick={handleLoadMoreComments}>加载更多</Button>
+                              </div>
+                            )}
+                            {!commentsQuery.hasNextPage && comments.length > 0 && (
+                              <div style={{ textAlign: 'center', color: token.colorTextSecondary }}>
+                                已经到底了
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>

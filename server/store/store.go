@@ -2,6 +2,7 @@ package store
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -388,7 +389,8 @@ func (s *Store) UserComments(userID string, offset, limit int) ([]Comment, int) 
 	defer s.mu.Unlock()
 
 	comments := make([]Comment, 0)
-	for _, comment := range s.comments {
+	for i := len(s.comments) - 1; i >= 0; i-- {
+		comment := s.comments[i]
 		if comment.AuthorID == userID && comment.DeletedAt == "" {
 			comments = append(comments, comment)
 		}
@@ -441,7 +443,8 @@ func (s *Store) Posts(boardID string) []Post {
 
 	if boardID == "" {
 		out := make([]Post, 0, len(s.posts))
-		for _, post := range s.posts {
+		for i := len(s.posts) - 1; i >= 0; i-- {
+			post := s.posts[i]
 			if post.DeletedAt == "" {
 				out = append(out, post)
 			}
@@ -450,7 +453,8 @@ func (s *Store) Posts(boardID string) []Post {
 	}
 
 	filtered := make([]Post, 0, len(s.posts))
-	for _, post := range s.posts {
+	for i := len(s.posts) - 1; i >= 0; i-- {
+		post := s.posts[i]
 		if post.BoardID == boardID && post.DeletedAt == "" {
 			filtered = append(filtered, post)
 		}
@@ -524,7 +528,8 @@ func (s *Store) Comments(postID string) []Comment {
 	defer s.mu.Unlock()
 
 	filtered := make([]Comment, 0, len(s.comments))
-	for _, comment := range s.comments {
+	for i := len(s.comments) - 1; i >= 0; i-- {
+		comment := s.comments[i]
 		if comment.PostID == postID && comment.DeletedAt == "" {
 			filtered = append(filtered, comment)
 		}
@@ -977,6 +982,10 @@ func (s *Store) SearchPosts(keyword string, offset, limit int) ([]Post, int) {
 		}
 	}
 
+	sort.Slice(matched, func(i, j int) bool {
+		return matched[i].CreatedAt > matched[j].CreatedAt
+	})
+
 	total := len(matched)
 	if offset < 0 {
 		offset = 0
@@ -1011,6 +1020,10 @@ func (s *Store) SearchUsers(keyword string, offset, limit int) ([]User, int) {
 			matched = append(matched, user)
 		}
 	}
+
+	sort.Slice(matched, func(i, j int) bool {
+		return matched[i].CreatedAt > matched[j].CreatedAt
+	})
 
 	total := len(matched)
 	if offset < 0 {

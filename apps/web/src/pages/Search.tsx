@@ -1,8 +1,13 @@
-import { useState, useEffect } from 'react'
+import { useCallback, useMemo } from 'react'
 import { useSearchParams, Link } from 'react-router-dom'
-import { Layout, Tabs, List, Card, Avatar, Typography, Tag, Empty, Spin, Pagination, Space, theme } from 'antd'
+import { Layout, Tabs, List, Card, Avatar, Typography, Tag, Empty, Spin, Space, theme, Button } from 'antd'
 import { UserOutlined, LikeOutlined, MessageOutlined, ClockCircleOutlined } from '@ant-design/icons'
+import { useInfiniteQuery } from '@tanstack/react-query'
+import { getErrorMessage } from '../api/client'
+import { fetchSearchPosts, fetchSearchUsers } from '../api/search'
 import SiteHeader from '../components/SiteHeader'
+import { ErrorState } from '../components/StateBlocks'
+import { useInfiniteScroll } from '../hooks/useInfiniteScroll'
 
 const { Content } = Layout
 const { Title, Text, Paragraph } = Typography
@@ -28,72 +33,72 @@ interface UserResult {
   created_at: string
 }
 
-interface SearchResponse<T> {
-  data: T[]
-  total: number
-  page: number
-  page_size: number
-}
-
 const Search = () => {
   const [searchParams, setSearchParams] = useSearchParams()
   const query = searchParams.get('q') || ''
   const tabKey = searchParams.get('tab') || 'posts'
-  const currentPage = parseInt(searchParams.get('page') || '1', 10)
   
   const { token } = theme.useToken()
-  
-  const [posts, setPosts] = useState<PostResult[]>([])
-  const [users, setUsers] = useState<UserResult[]>([])
-  const [postsTotal, setPostsTotal] = useState(0)
-  const [usersTotal, setUsersTotal] = useState(0)
-  const [loading, setLoading] = useState(false)
 
-  // Fetch search results
-  useEffect(() => {
-    if (!query) {
-      setPosts([])
-      setUsers([])
-      setPostsTotal(0)
-      setUsersTotal(0)
-      return
-    }
+  const pageSize = 20
+  const postsQuery = useInfiniteQuery({
+    queryKey: ['search-posts', query],
+    initialPageParam: 1,
+    enabled: Boolean(query),
+    queryFn: ({ pageParam }) => fetchSearchPosts<PostResult>(query, pageParam, pageSize),
+    getNextPageParam: (lastPage, allPages) => {
+      const loaded = allPages.reduce((sum, page) => sum + page.data.length, 0)
+      return loaded >= lastPage.total ? undefined : allPages.length + 1
+    },
+  })
 
-    const fetchResults = async () => {
-      setLoading(true)
-      try {
-        if (tabKey === 'posts') {
-          const res = await fetch(`/api/v1/search/posts?q=${encodeURIComponent(query)}&page=${currentPage}`)
-          if (res.ok) {
-            const data: SearchResponse<PostResult> = await res.json()
-            setPosts(data.data || [])
-            setPostsTotal(data.total)
-          }
-        } else {
-          const res = await fetch(`/api/v1/search/users?q=${encodeURIComponent(query)}&page=${currentPage}`)
-          if (res.ok) {
-            const data: SearchResponse<UserResult> = await res.json()
-            setUsers(data.data || [])
-            setUsersTotal(data.total)
-          }
-        }
-      } catch (err) {
-        console.error('Search error:', err)
-      } finally {
-        setLoading(false)
-      }
-    }
+  const usersQuery = useInfiniteQuery({
+    queryKey: ['search-users', query],
+    initialPageParam: 1,
+    enabled: Boolean(query),
+    queryFn: ({ pageParam }) => fetchSearchUsers<UserResult>(query, pageParam, pageSize),
+    getNextPageParam: (lastPage, allPages) => {
+      const loaded = allPages.reduce((sum, page) => sum + page.data.length, 0)
+      return loaded >= lastPage.total ? undefined : allPages.length + 1
+    },
+  })
 
-    fetchResults()
-  }, [query, tabKey, currentPage])
+  const posts = useMemo(
+    () => postsQuery.data?.pages.flatMap((page) => page.data) ?? [],
+    [postsQuery.data],
+  )
+  const users = useMemo(
+    () => usersQuery.data?.pages.flatMap((page) => page.data) ?? [],
+    [usersQuery.data],
+  )
+  const postsTotal = postsQuery.data?.pages[0]?.total ?? 0
+  const usersTotal = usersQuery.data?.pages[0]?.total ?? 0
+  const postsErrorMessage = postsQuery.error ? getErrorMessage(postsQuery.error) : null
+  const usersErrorMessage = usersQuery.error ? getErrorMessage(usersQuery.error) : null
 
   const handleTabChange = (key: string) => {
-    setSearchParams({ q: query, tab: key, page: '1' })
+    setSearchParams({ q: query, tab: key })
   }
 
-  const handlePageChange = (page: number) => {
-    setSearchParams({ q: query, tab: tabKey, page: String(page) })
-  }
+  const handleLoadMorePosts = useCallback(() => {
+    if (!postsQuery.hasNextPage || postsQuery.isFetchingNextPage) return
+    void postsQuery.fetchNextPage()
+  }, [postsQuery])
+
+  const handleLoadMoreUsers = useCallback(() => {
+    if (!usersQuery.hasNextPage || usersQuery.isFetchingNextPage) return
+    void usersQuery.fetchNextPage()
+  }, [usersQuery])
+
+  const { ref: postsSentinelRef, isSupported: postsScrollSupported } = useInfiniteScroll({
+    onLoadMore: handleLoadMorePosts,
+    enabled: tabKey === 'posts' && Boolean(postsQuery.hasNextPage),
+  })
+
+  const { ref: usersSentinelRef, isSupported: usersScrollSupported } = useInfiniteScroll({
+    onLoadMore: handleLoadMoreUsers,
+    enabled: tabKey === 'users' && Boolean(usersQuery.hasNextPage),
+  })
 
   const formatDate = (dateStr: string) => {
     const date = new Date(dateStr)
@@ -187,10 +192,12 @@ const Search = () => {
     {
       key: 'posts',
       label: `帖子${postsTotal > 0 ? ` (${postsTotal})` : ''}`,
-      children: loading ? (
+      children: postsQuery.isLoading ? (
         <div style={{ textAlign: 'center', padding: 48 }}>
           <Spin size="large" />
         </div>
+      ) : postsErrorMessage ? (
+        <ErrorState message={postsErrorMessage} onRetry={postsQuery.refetch} />
       ) : posts.length > 0 ? (
         <>
           <List
@@ -199,15 +206,20 @@ const Search = () => {
             split={false}
             style={{ marginBottom: 24 }}
           />
-          {postsTotal > 20 && (
-            <div style={{ textAlign: 'center' }}>
-              <Pagination 
-                current={currentPage} 
-                total={postsTotal} 
-                pageSize={20}
-                onChange={handlePageChange}
-                showSizeChanger={false}
-              />
+          {postsQuery.isFetchingNextPage && (
+            <div style={{ textAlign: 'center', color: token.colorTextSecondary, paddingBottom: 16 }}>
+              Loading more...
+            </div>
+          )}
+          {postsQuery.hasNextPage && <div ref={postsSentinelRef} style={{ height: 1 }} />}
+          {!postsScrollSupported && postsQuery.hasNextPage && (
+            <div style={{ textAlign: 'center', marginBottom: 16 }}>
+              <Button onClick={handleLoadMorePosts}>加载更多</Button>
+            </div>
+          )}
+          {!postsQuery.hasNextPage && posts.length > 0 && (
+            <div style={{ textAlign: 'center', color: token.colorTextSecondary, paddingBottom: 16 }}>
+              已经到底了
             </div>
           )}
         </>
@@ -218,10 +230,12 @@ const Search = () => {
     {
       key: 'users',
       label: `用户${usersTotal > 0 ? ` (${usersTotal})` : ''}`,
-      children: loading ? (
+      children: usersQuery.isLoading ? (
         <div style={{ textAlign: 'center', padding: 48 }}>
           <Spin size="large" />
         </div>
+      ) : usersErrorMessage ? (
+        <ErrorState message={usersErrorMessage} onRetry={usersQuery.refetch} />
       ) : users.length > 0 ? (
         <>
           <List
@@ -230,15 +244,20 @@ const Search = () => {
             split={false}
             style={{ marginBottom: 24 }}
           />
-          {usersTotal > 20 && (
-            <div style={{ textAlign: 'center' }}>
-              <Pagination 
-                current={currentPage} 
-                total={usersTotal} 
-                pageSize={20}
-                onChange={handlePageChange}
-                showSizeChanger={false}
-              />
+          {usersQuery.isFetchingNextPage && (
+            <div style={{ textAlign: 'center', color: token.colorTextSecondary, paddingBottom: 16 }}>
+              Loading more...
+            </div>
+          )}
+          {usersQuery.hasNextPage && <div ref={usersSentinelRef} style={{ height: 1 }} />}
+          {!usersScrollSupported && usersQuery.hasNextPage && (
+            <div style={{ textAlign: 'center', marginBottom: 16 }}>
+              <Button onClick={handleLoadMoreUsers}>加载更多</Button>
+            </div>
+          )}
+          {!usersQuery.hasNextPage && users.length > 0 && (
+            <div style={{ textAlign: 'center', color: token.colorTextSecondary, paddingBottom: 16 }}>
+              已经到底了
             </div>
           )}
         </>
