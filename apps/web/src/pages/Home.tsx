@@ -1,7 +1,6 @@
-import { useCallback, useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
-import { Layout, Row, Col, Typography, Button, Tag, Space, theme } from 'antd'
-import { fetchBoards } from '../api/boards'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Layout, Row, Col, Typography, Button, Tag, Space } from 'antd'
+import { useInfiniteQuery } from '@tanstack/react-query'
 import { getErrorMessage } from '../api/client'
 import { fetchPosts } from '../api/posts'
 import BoardList from '../components/BoardList'
@@ -10,70 +9,70 @@ import SectionCard from '../components/SectionCard'
 import SiteHeader from '../components/SiteHeader'
 import { EmptyState, ErrorState } from '../components/StateBlocks'
 import { BoardSkeletonList, PostSkeletonList } from '../components/Skeletons'
-import type { Board } from '../api/boards'
-import type { PostItem } from '../api/posts'
+import { useBoards } from '../hooks/useBoards'
+import { useInfiniteScroll } from '../hooks/useInfiniteScroll'
 
-const { Content, Sider } = Layout
-const { Title, Text } = Typography
-
-type LoadState<T> = {
-  data: T
-  loading: boolean
-  error: string | null
-}
+const { Content } = Layout
+const { Text } = Typography
 
 const Home = () => {
-  const { token } = theme.useToken()
-  const [boardsState, setBoardsState] = useState<LoadState<Board[]>>({
-    data: [],
-    loading: true,
-    error: null,
-  })
-  const [postsState, setPostsState] = useState<LoadState<PostItem[]>>({
-    data: [],
-    loading: true,
-    error: null,
-  })
   const [activeBoardId, setActiveBoardId] = useState<string | null>(null)
 
-  const loadBoards = useCallback(async () => {
-    setBoardsState((prev) => ({ ...prev, loading: true, error: null }))
+  const {
+    data: boards = [],
+    isLoading: boardsLoading,
+    error: boardsError,
+    refetch: refetchBoards,
+  } = useBoards()
 
-    try {
-      const data = await fetchBoards()
-      setBoardsState({ data, loading: false, error: null })
-    } catch (error) {
-      setBoardsState({
-        data: [],
-        loading: false,
-        error: getErrorMessage(error),
-      })
-    }
-  }, [])
+  const postsPageSize = 20
+  const {
+    data: postsPages,
+    isLoading: postsLoading,
+    error: postsError,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+    refetch: refetchPosts,
+  } = useInfiniteQuery({
+    queryKey: ['posts', activeBoardId],
+    initialPageParam: 1,
+    queryFn: ({ pageParam }) =>
+      fetchPosts(pageParam, postsPageSize, activeBoardId ?? undefined),
+    getNextPageParam: (lastPage, allPages) => {
+      const loaded = allPages.reduce((sum, page) => sum + page.items.length, 0)
+      return loaded >= lastPage.total ? undefined : allPages.length + 1
+    },
+  })
 
-  const loadPosts = useCallback(async () => {
-    setPostsState((prev) => ({ ...prev, loading: true, error: null }))
+  const posts = useMemo(
+    () => postsPages?.pages.flatMap((page) => page.items) ?? [],
+    [postsPages],
+  )
 
-    try {
-      const data = await fetchPosts(1, 20, activeBoardId ?? undefined)
-      setPostsState({ data: data.items, loading: false, error: null })
-    } catch (error) {
-      setPostsState({
-        data: [],
-        loading: false,
-        error: getErrorMessage(error),
-      })
-    }
-  }, [activeBoardId])
+  const postsErrorMessage = postsError ? getErrorMessage(postsError) : null
+
+  const handleLoadMore = useCallback(() => {
+    if (!hasNextPage || isFetchingNextPage) return
+    void fetchNextPage()
+  }, [fetchNextPage, hasNextPage, isFetchingNextPage])
+
+  const { ref: postsSentinelRef, isSupported: postsScrollSupported } = useInfiniteScroll({
+    onLoadMore: handleLoadMore,
+    enabled: Boolean(hasNextPage),
+  })
 
   useEffect(() => {
-    void loadBoards()
-    void loadPosts()
-  }, [loadBoards, loadPosts])
+    if (activeBoardId && !boards.some((board) => board.id === activeBoardId)) {
+      setActiveBoardId(null)
+    }
+  }, [boards, activeBoardId])
 
-  const activeBoard = boardsState.data.find(
+  const activeBoard = boards.find(
     (board) => board.id === activeBoardId,
   )
+
+  const boardsErrorMessage = boardsError ? getErrorMessage(boardsError) : null
 
   const renderFeedHeader = () => (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
@@ -109,18 +108,18 @@ const Home = () => {
           {/* Left Sidebar: Boards */}
           <Col xs={0} md={6} lg={5}>
             <SectionCard title="Boards" style={{ position: 'sticky', top: 88 }}>
-              {boardsState.loading ? (
+              {boardsLoading ? (
                 <BoardSkeletonList count={5} />
-              ) : boardsState.error ? (
-                <ErrorState message={boardsState.error} onRetry={loadBoards} />
-              ) : boardsState.data.length === 0 ? (
+              ) : boardsErrorMessage ? (
+                <ErrorState message={boardsErrorMessage} onRetry={refetchBoards} />
+              ) : boards.length === 0 ? (
                 <EmptyState
                   title="No boards"
                   description="No boards available."
                 />
               ) : (
                 <BoardList
-                  boards={boardsState.data}
+                  boards={boards}
                   activeBoardId={activeBoardId}
                   onSelect={setActiveBoardId}
                 />
@@ -134,11 +133,11 @@ const Home = () => {
               title={activeBoard ? 'Board Posts' : 'Latest Posts'}
               actions={renderFeedHeader()}
             >
-              {postsState.loading ? (
+              {postsLoading ? (
                 <PostSkeletonList count={4} />
-              ) : postsState.error ? (
-                <ErrorState message={postsState.error} onRetry={loadPosts} />
-              ) : postsState.data.length === 0 ? (
+              ) : postsErrorMessage ? (
+                <ErrorState message={postsErrorMessage} onRetry={refetchPosts} />
+              ) : posts.length === 0 ? (
                 <EmptyState
                   title="No posts yet"
                   description={
@@ -154,9 +153,25 @@ const Home = () => {
                 />
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-                  {postsState.data.map((post) => (
+                  {posts.map((post) => (
                     <PostCard key={post.id} post={post} />
                   ))}
+                  {isFetchingNextPage && (
+                    <div style={{ textAlign: 'center', color: 'rgba(0,0,0,0.45)', padding: '8px 0' }}>
+                      Loading more...
+                    </div>
+                  )}
+                  {hasNextPage && <div ref={postsSentinelRef} style={{ height: 1 }} />}
+                  {!postsScrollSupported && hasNextPage && (
+                    <div style={{ textAlign: 'center' }}>
+                      <Button onClick={handleLoadMore}>加载更多</Button>
+                    </div>
+                  )}
+                  {!hasNextPage && posts.length > 0 && (
+                    <div style={{ textAlign: 'center', color: 'rgba(0,0,0,0.35)', padding: '8px 0' }}>
+                      已经到底了
+                    </div>
+                  )}
                 </div>
               )}
             </SectionCard>
