@@ -185,6 +185,20 @@ func (s *SQLiteStore) migrate() error {
 			PRIMARY KEY (follower_id, followee_id)
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_follows_followee ON follows(followee_id);`,
+
+		// Notifications table for in-app notifications
+		`CREATE TABLE IF NOT EXISTS notifications (
+			seq INTEGER NOT NULL,
+			id TEXT PRIMARY KEY,
+			recipient_id TEXT NOT NULL,
+			actor_id TEXT NOT NULL,
+			type TEXT NOT NULL,
+			target_type TEXT,
+			target_id TEXT,
+			read_at TEXT,
+			created_at TEXT NOT NULL
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_notifications_recipient ON notifications(recipient_id, created_at DESC);`,
 	}
 
 	for _, stmt := range stmts {
@@ -1680,6 +1694,253 @@ func max(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// SearchPosts searches posts by title or content using LIKE.
+func (s *SQLiteStore) SearchPosts(keyword string, offset, limit int) ([]Post, int) {
+	keyword = strings.TrimSpace(keyword)
+	if keyword == "" {
+		return nil, 0
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+
+	pattern := "%" + keyword + "%"
+
+	// Get total count
+	var total int
+	if err := s.db.QueryRow(
+		`SELECT COUNT(1)
+		 FROM posts
+		 WHERE (title LIKE ? OR content LIKE ?)
+		   AND (deleted_at IS NULL OR TRIM(deleted_at) = '');`,
+		pattern, pattern,
+	).Scan(&total); err != nil {
+		return nil, 0
+	}
+
+	// Get paginated results
+	rows, err := s.db.Query(
+		`SELECT id, board_id, author_id, title, content, content_json, tags, attachments, created_at
+		 FROM posts
+		 WHERE (title LIKE ? OR content LIKE ?)
+		   AND (deleted_at IS NULL OR TRIM(deleted_at) = '')
+		 ORDER BY seq DESC
+		 LIMIT ? OFFSET ?;`,
+		pattern, pattern, limit, offset,
+	)
+	if err != nil {
+		return nil, 0
+	}
+	defer rows.Close()
+
+	out := make([]Post, 0, limit)
+	for rows.Next() {
+		var p Post
+		var contentJSON sql.NullString
+		var tags sql.NullString
+		var attachments sql.NullString
+		if err := rows.Scan(&p.ID, &p.BoardID, &p.AuthorID, &p.Title, &p.Content, &contentJSON, &tags, &attachments, &p.CreatedAt); err != nil {
+			return nil, 0
+		}
+		p.ContentJSON = strings.TrimSpace(contentJSON.String)
+		p.Tags = decodeTags(tags.String)
+		p.Attachments = decodeAttachmentIDs(attachments.String)
+		out = append(out, p)
+	}
+	return out, total
+}
+
+// SearchUsers searches users by nickname using LIKE.
+func (s *SQLiteStore) SearchUsers(keyword string, offset, limit int) ([]User, int) {
+	keyword = strings.TrimSpace(keyword)
+	if keyword == "" {
+		return nil, 0
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+
+	pattern := "%" + keyword + "%"
+
+	// Get total count
+	var total int
+	if err := s.db.QueryRow(
+		`SELECT COUNT(1) FROM users WHERE nickname LIKE ?;`,
+		pattern,
+	).Scan(&total); err != nil {
+		return nil, 0
+	}
+
+	// Get paginated results
+	rows, err := s.db.Query(
+		`SELECT id, nickname, created_at, avatar, cover, bio
+		 FROM users
+		 WHERE nickname LIKE ?
+		 ORDER BY created_at DESC
+		 LIMIT ? OFFSET ?;`,
+		pattern, limit, offset,
+	)
+	if err != nil {
+		return nil, 0
+	}
+	defer rows.Close()
+
+	out := make([]User, 0, limit)
+	for rows.Next() {
+		var user User
+		if err := rows.Scan(&user.ID, &user.Nickname, &user.CreatedAt, &user.Avatar, &user.Cover, &user.Bio); err != nil {
+			return nil, 0
+		}
+		out = append(out, user)
+	}
+	return out, total
+}
+
+// CreateNotification creates a new notification.
+func (s *SQLiteStore) CreateNotification(recipientID, actorID, notifType, targetType, targetID string) (Notification, error) {
+	if recipientID == "" || actorID == "" || notifType == "" {
+		return Notification{}, ErrInvalidInput
+	}
+	// Don't notify yourself
+	if recipientID == actorID {
+		return Notification{}, nil
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return Notification{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	seq, err := s.nextCounter(tx, "notification")
+	if err != nil {
+		return Notification{}, err
+	}
+
+	notif := Notification{
+		ID:          fmt.Sprintf("n_%d", seq),
+		RecipientID: recipientID,
+		ActorID:     actorID,
+		Type:        notifType,
+		TargetType:  targetType,
+		TargetID:    targetID,
+		CreatedAt:   nowRFC3339(),
+	}
+
+	if _, err := tx.Exec(
+		`INSERT INTO notifications(seq, id, recipient_id, actor_id, type, target_type, target_id, read_at, created_at)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, NULL, ?);`,
+		seq,
+		notif.ID,
+		notif.RecipientID,
+		notif.ActorID,
+		notif.Type,
+		nullStringOrValue(notif.TargetType),
+		nullStringOrValue(notif.TargetID),
+		notif.CreatedAt,
+	); err != nil {
+		return Notification{}, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return Notification{}, err
+	}
+	return notif, nil
+}
+
+// Notifications returns notifications for a user with pagination.
+func (s *SQLiteStore) Notifications(recipientID string, offset, limit int) ([]Notification, int) {
+	if offset < 0 {
+		offset = 0
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+
+	var total int
+	if err := s.db.QueryRow(
+		`SELECT COUNT(1) FROM notifications WHERE recipient_id = ?;`,
+		recipientID,
+	).Scan(&total); err != nil {
+		return nil, 0
+	}
+
+	rows, err := s.db.Query(
+		`SELECT id, recipient_id, actor_id, type, target_type, target_id, read_at, created_at
+		 FROM notifications
+		 WHERE recipient_id = ?
+		 ORDER BY seq DESC
+		 LIMIT ? OFFSET ?;`,
+		recipientID, limit, offset,
+	)
+	if err != nil {
+		return nil, 0
+	}
+	defer rows.Close()
+
+	out := make([]Notification, 0, limit)
+	for rows.Next() {
+		var n Notification
+		var targetType sql.NullString
+		var targetID sql.NullString
+		var readAt sql.NullString
+		if err := rows.Scan(&n.ID, &n.RecipientID, &n.ActorID, &n.Type, &targetType, &targetID, &readAt, &n.CreatedAt); err != nil {
+			return nil, 0
+		}
+		n.TargetType = strings.TrimSpace(targetType.String)
+		n.TargetID = strings.TrimSpace(targetID.String)
+		n.ReadAt = strings.TrimSpace(readAt.String)
+		out = append(out, n)
+	}
+	return out, total
+}
+
+// UnreadNotificationCount returns the count of unread notifications.
+func (s *SQLiteStore) UnreadNotificationCount(recipientID string) int {
+	var count int
+	if err := s.db.QueryRow(
+		`SELECT COUNT(1) FROM notifications WHERE recipient_id = ? AND (read_at IS NULL OR TRIM(read_at) = '');`,
+		recipientID,
+	).Scan(&count); err != nil {
+		return 0
+	}
+	return count
+}
+
+// MarkNotificationRead marks a single notification as read.
+func (s *SQLiteStore) MarkNotificationRead(notificationID, recipientID string) error {
+	res, err := s.db.Exec(
+		`UPDATE notifications SET read_at = ? WHERE id = ? AND recipient_id = ?;`,
+		nowRFC3339(),
+		notificationID,
+		recipientID,
+	)
+	if err != nil {
+		return err
+	}
+	affected, _ := res.RowsAffected()
+	if affected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// MarkAllNotificationsRead marks all notifications for a user as read.
+func (s *SQLiteStore) MarkAllNotificationsRead(recipientID string) error {
+	_, err := s.db.Exec(
+		`UPDATE notifications SET read_at = ? WHERE recipient_id = ? AND (read_at IS NULL OR TRIM(read_at) = '');`,
+		nowRFC3339(),
+		recipientID,
+	)
+	return err
 }
 
 var _ API = (*SQLiteStore)(nil)
