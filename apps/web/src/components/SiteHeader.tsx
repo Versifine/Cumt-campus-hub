@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
-import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { Layout, Menu, Input, Button, Avatar, Dropdown, Space, theme } from 'antd'
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
+import { Layout, Menu, Input, Button, Avatar, Dropdown, Space, Badge, theme } from 'antd'
 import { 
   UserOutlined, 
   LogoutOutlined, 
@@ -8,7 +8,8 @@ import {
   SearchOutlined,
   CommentOutlined,
   TeamOutlined,
-  ReadOutlined
+  ReadOutlined,
+  BellOutlined
 } from '@ant-design/icons'
 import { useAuth } from '../context/AuthContext'
 import type { MenuProps } from 'antd'
@@ -16,10 +17,17 @@ import type { MenuProps } from 'antd'
 const { Header } = Layout
 
 const SiteHeader = () => {
-  const { user, logout } = useAuth()
+  const { user, logout, token: authToken } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
+  const [searchParams] = useSearchParams()
   const { token } = theme.useToken()
+  
+  // Search state
+  const [searchValue, setSearchValue] = useState('')
+  
+  // Notification state
+  const [unreadCount, setUnreadCount] = useState(0)
   
   // Manage active menu key based on current path
   const [current, setCurrent] = useState(location.pathname)
@@ -32,9 +40,50 @@ const SiteHeader = () => {
     else setCurrent('')
   }, [location.pathname])
 
+  // Sync search input with URL query param
+  useEffect(() => {
+    if (location.pathname === '/search') {
+      setSearchValue(searchParams.get('q') || '')
+    }
+  }, [location.pathname, searchParams])
+
+  // Fetch unread notification count
+  useEffect(() => {
+    if (!authToken) {
+      setUnreadCount(0)
+      return
+    }
+
+    const fetchUnreadCount = async () => {
+      try {
+        const res = await fetch('/api/v1/notifications/unread-count', {
+          headers: { Authorization: `Bearer ${authToken}` }
+        })
+        if (res.ok) {
+          const data = await res.json()
+          setUnreadCount(data.count || 0)
+        }
+      } catch (err) {
+        console.error('Failed to fetch unread count:', err)
+      }
+    }
+
+    fetchUnreadCount()
+    // Poll every 30 seconds
+    const interval = setInterval(fetchUnreadCount, 30000)
+    return () => clearInterval(interval)
+  }, [authToken])
+
   const handleLogout = () => {
     logout()
     navigate('/')
+  }
+
+  const handleSearch = (value: string) => {
+    const trimmed = value.trim()
+    if (trimmed) {
+      navigate(`/search?q=${encodeURIComponent(trimmed)}`)
+    }
   }
 
   const handleMenuClick: MenuProps['onClick'] = (e) => {
@@ -130,8 +179,8 @@ const SiteHeader = () => {
 
       {/* Right Side: Search & Actions */}
       <Space size="middle">
-        <Input
-          placeholder="搜索版块或帖子"
+        <Input.Search
+          placeholder="搜索帖子或用户"
           prefix={<SearchOutlined style={{ color: token.colorTextDescription }} />}
           style={{ 
             width: 240, 
@@ -139,10 +188,23 @@ const SiteHeader = () => {
             background: 'rgba(255,255,255,0.6)' 
           }}
           variant="filled"
+          value={searchValue}
+          onChange={(e) => setSearchValue(e.target.value)}
+          onSearch={handleSearch}
+          enterButton={false}
+          allowClear
         />
 
         {user ? (
           <>
+            <Badge count={unreadCount} size="small" offset={[-2, 2]}>
+              <Button 
+                type="text" 
+                shape="circle"
+                icon={<BellOutlined style={{ fontSize: 18 }} />}
+                onClick={() => navigate('/notifications')}
+              />
+            </Badge>
             <Button 
               type="primary" 
               shape="round" 

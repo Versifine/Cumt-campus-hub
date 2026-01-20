@@ -15,7 +15,9 @@ import (
 	"github.com/Versifine/Cumt-cumpus-hub/server/chat"
 	"github.com/Versifine/Cumt-cumpus-hub/server/community"
 	"github.com/Versifine/Cumt-cumpus-hub/server/file"
+	"github.com/Versifine/Cumt-cumpus-hub/server/notification"
 	"github.com/Versifine/Cumt-cumpus-hub/server/report"
+	"github.com/Versifine/Cumt-cumpus-hub/server/search"
 	"github.com/Versifine/Cumt-cumpus-hub/server/store"
 )
 
@@ -58,6 +60,12 @@ func main() {
 	chatHandler := &chat.Handler{Store: dataStore, Hub: chatHub}
 
 	reportHandler := &report.Handler{Store: dataStore, Auth: authService}
+
+	// 搜索模块 Handler：依赖 store（数据检索）。
+	searchHandler := &search.Handler{Store: dataStore}
+
+	// 通知模块 Handler：依赖 store 和 auth。
+	notificationHandler := &notification.Handler{Store: dataStore, Auth: authService}
 
 	// 文件模块 Handler：依赖 store、鉴权服务，以及上传目录配置。
 	fileHandler := &file.Handler{
@@ -129,19 +137,33 @@ func main() {
 	router.PATCH("/api/v1/admin/reports/:id", reportHandler.AdminUpdate)
 
 	// -----------------------------
-	// 8) REST API：文件上传/下载
+	// 8) REST API：搜索
+	// -----------------------------
+	router.GET("/api/v1/search/posts", searchHandler.SearchPosts)
+	router.GET("/api/v1/search/users", searchHandler.SearchUsers)
+
+	// -----------------------------
+	// 9) REST API：通知
+	// -----------------------------
+	router.GET("/api/v1/notifications", notificationHandler.List)
+	router.GET("/api/v1/notifications/unread-count", notificationHandler.UnreadCount)
+	router.PATCH("/api/v1/notifications/:id", notificationHandler.MarkRead)
+	router.POST("/api/v1/notifications/read-all", notificationHandler.MarkAllRead)
+
+	// -----------------------------
+	// 10) REST API：文件上传/下载
 	// -----------------------------
 	router.POST("/api/v1/files", fileHandler.Upload)
 	router.POST("/api/uploads/images", fileHandler.UploadImage)
 	router.GET("/files/:id", fileHandler.Download)
 
 	// -----------------------------
-	// 9) WebSocket：聊天
+	// 11) WebSocket：聊天
 	// -----------------------------
 	router.GET("/ws/chat", chatHandler.ServeWS)
 
 	// -----------------------------
-	// 10) 静态资源：前端页面
+	// 12) 静态资源：前端页面
 	// -----------------------------
 	fileServer := http.FileServer(http.Dir("apps/web"))
 	router.NoRoute(func(c *gin.Context) {
@@ -149,7 +171,7 @@ func main() {
 	})
 
 	// -----------------------------
-	// 11) 服务监听地址配置
+	// 13) 服务监听地址配置
 	// -----------------------------
 	// SERVER_ADDR 用于指定监听地址，例如 ":8080" 或 "127.0.0.1:8080"
 	addr := strings.TrimSpace(os.Getenv("SERVER_ADDR"))
@@ -159,7 +181,7 @@ func main() {
 	}
 
 	// -----------------------------
-	// 12) 构造 HTTP Server 并启动
+	// 14) 构造 HTTP Server 并启动
 	// -----------------------------
 	server := &http.Server{
 		Addr: addr,

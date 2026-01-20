@@ -3,8 +3,10 @@ import RequireAuth from './components/RequireAuth'
 import Chat from './pages/Chat'
 import Home from './pages/Home'
 import Login from './pages/Login'
+import Notifications from './pages/Notifications'
 import PostPlaceholder from './pages/PostPlaceholder'
 import Resources from './pages/Resources'
+import Search from './pages/Search'
 import Submit from './pages/Submit'
 import UserProfile from './pages/UserProfile'
 import Admin from './pages/Admin'
@@ -45,6 +47,18 @@ const router = createBrowserRouter([
   {
     path: '/post/:id',
     element: <PostPlaceholder />,
+  },
+  {
+    path: '/search',
+    element: <Search />,
+  },
+  {
+    path: '/notifications',
+    element: (
+      <RequireAuth>
+        <Notifications />
+      </RequireAuth>
+    ),
   },
   {
     path: '/u/:id',

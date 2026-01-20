@@ -383,6 +383,9 @@ func (s *Service) FollowUser(c *gin.Context) {
 		return
 	}
 
+	// Trigger follow notification
+	_, _ = s.Store.CreateNotification(targetID, me.ID, "follow", "", "")
+
 	c.JSON(http.StatusOK, map[string]bool{"success": true})
 }
 

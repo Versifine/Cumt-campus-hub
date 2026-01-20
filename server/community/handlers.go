@@ -292,6 +292,10 @@ func (h *Handler) CreateComment(c *gin.Context) {
 
 	tags := normalizeTags(req.Tags, maxCommentTags)
 	comment := h.Store.CreateComment(postID, user.ID, req.Content, contentJSON, parentIDValue, tags, attachments)
+
+	// Trigger notifications
+	h.triggerCommentNotifications(postID, comment, user.ID, parentIDValue)
+
 	var parentID *string
 	if strings.TrimSpace(comment.ParentID) != "" {
 		value := comment.ParentID
@@ -461,6 +465,13 @@ func (h *Handler) VotePost(c *gin.Context) {
 		return
 	}
 
+	// Trigger like notification only for upvotes
+	if req.Value == 1 {
+		if post, ok := h.Store.GetPost(postID); ok && post.AuthorID != user.ID {
+			_, _ = h.Store.CreateNotification(post.AuthorID, user.ID, "like", "post", postID)
+		}
+	}
+
 	resp := map[string]any{
 		"post_id": postID,
 		"score":   score,
@@ -570,6 +581,13 @@ func (h *Handler) VoteComment(c *gin.Context) {
 			writeError(c, http.StatusInternalServerError, 5000, "server error")
 		}
 		return
+	}
+
+	// Trigger like notification only for upvotes
+	if req.Value == 1 {
+		if comment, ok := h.Store.GetComment(postID, commentID); ok && comment.AuthorID != user.ID {
+			_, _ = h.Store.CreateNotification(comment.AuthorID, user.ID, "like", "comment", commentID)
+		}
 	}
 
 	resp := map[string]any{
@@ -831,4 +849,35 @@ func bearerToken(c *gin.Context) string {
 
 func writeError(c *gin.Context, status int, code int, message string) {
 	c.JSON(status, gin.H{"code": code, "message": message})
+}
+
+// triggerCommentNotifications sends notifications when a comment is created.
+func (h *Handler) triggerCommentNotifications(postID string, comment store.Comment, actorID, parentID string) {
+	// If this is a reply to another comment, notify the parent comment author
+	if parentID != "" {
+		if parentComment, ok := h.Store.GetComment(postID, parentID); ok {
+			if parentComment.AuthorID != actorID {
+				_, _ = h.Store.CreateNotification(
+					parentComment.AuthorID,
+					actorID,
+					"reply",
+					"comment",
+					comment.ID,
+				)
+			}
+		}
+	}
+
+	// Notify the post author about the new comment (unless they're replying to themselves)
+	if post, ok := h.Store.GetPost(postID); ok {
+		if post.AuthorID != actorID {
+			_, _ = h.Store.CreateNotification(
+				post.AuthorID,
+				actorID,
+				"comment",
+				"post",
+				postID,
+			)
+		}
+	}
 }

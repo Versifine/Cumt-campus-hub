@@ -68,6 +68,17 @@ type API interface {
 	CreateReport(reporterID, targetType, targetID, reason, detail string) (Report, error)
 	Reports(status string, page, pageSize int) ([]Report, int, error)
 	UpdateReport(reportID, status, action, note, handledBy string) (Report, error)
+
+	// Search
+	SearchPosts(keyword string, offset, limit int) ([]Post, int)
+	SearchUsers(keyword string, offset, limit int) ([]User, int)
+
+	// Notifications
+	CreateNotification(recipientID, actorID, notifType, targetType, targetID string) (Notification, error)
+	Notifications(recipientID string, offset, limit int) ([]Notification, int)
+	UnreadNotificationCount(recipientID string) int
+	MarkNotificationRead(notificationID, recipientID string) error
+	MarkAllNotificationsRead(recipientID string) error
 }
 
 // Board is a simple forum category in the demo community module.
@@ -141,29 +152,43 @@ type Report struct {
 	UpdatedAt  string
 }
 
+// Notification represents an in-app notification.
+type Notification struct {
+	ID          string
+	RecipientID string // User who receives the notification
+	ActorID     string // User who triggered the notification
+	Type        string // "comment", "reply", "follow", "like"
+	TargetType  string // "post", "comment"
+	TargetID    string // ID of the post or comment
+	ReadAt      string // When the notification was read
+	CreatedAt   string
+}
+
 // Store is an in-memory, mutex-protected demo data store.
 type Store struct {
-	mu           sync.Mutex
-	users        map[string]User
-	accounts     map[string]string
-	passwords    map[string]string
-	tokens       map[string]string
-	userTokens   map[string]string
-	boards       []Board
-	posts        []Post
-	comments     []Comment
-	postVotes    map[string]map[string]int
-	commentVotes map[string]map[string]int
-	files        map[string]FileMeta
-	messages     map[string][]ChatMessage
-	reports      []Report
-	follows      map[string]map[string]bool // map[followerID]map[followeeID]bool
-	nextUserID   int
-	nextPostID   int
-	nextComment  int
-	nextFileID   int
-	nextMsgID    int
-	nextReport   int
+	mu            sync.Mutex
+	users         map[string]User
+	accounts      map[string]string
+	passwords     map[string]string
+	tokens        map[string]string
+	userTokens    map[string]string
+	boards        []Board
+	posts         []Post
+	comments      []Comment
+	postVotes     map[string]map[string]int
+	commentVotes  map[string]map[string]int
+	files         map[string]FileMeta
+	messages      map[string][]ChatMessage
+	reports       []Report
+	follows       map[string]map[string]bool // map[followerID]map[followeeID]bool
+	notifications []Notification
+	nextUserID    int
+	nextPostID    int
+	nextComment   int
+	nextFileID    int
+	nextMsgID     int
+	nextReport    int
+	nextNotifID   int
 }
 
 // NewStore creates a demo store with a few built-in boards.
@@ -928,4 +953,176 @@ func sumVotes(votes map[string]int) int {
 		score += value
 	}
 	return score
+}
+
+// SearchPosts searches posts by title or content.
+func (s *Store) SearchPosts(keyword string, offset, limit int) ([]Post, int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	keyword = strings.TrimSpace(strings.ToLower(keyword))
+	if keyword == "" {
+		return nil, 0
+	}
+
+	matched := make([]Post, 0)
+	for _, post := range s.posts {
+		if post.DeletedAt != "" {
+			continue
+		}
+		titleLower := strings.ToLower(post.Title)
+		contentLower := strings.ToLower(post.Content)
+		if strings.Contains(titleLower, keyword) || strings.Contains(contentLower, keyword) {
+			matched = append(matched, post)
+		}
+	}
+
+	total := len(matched)
+	if offset < 0 {
+		offset = 0
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	end := offset + limit
+	if end > total {
+		end = total
+	}
+	if offset > end {
+		offset = end
+	}
+	return matched[offset:end], total
+}
+
+// SearchUsers searches users by nickname.
+func (s *Store) SearchUsers(keyword string, offset, limit int) ([]User, int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	keyword = strings.TrimSpace(strings.ToLower(keyword))
+	if keyword == "" {
+		return nil, 0
+	}
+
+	matched := make([]User, 0)
+	for _, user := range s.users {
+		nicknameLower := strings.ToLower(user.Nickname)
+		if strings.Contains(nicknameLower, keyword) {
+			matched = append(matched, user)
+		}
+	}
+
+	total := len(matched)
+	if offset < 0 {
+		offset = 0
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	end := offset + limit
+	if end > total {
+		end = total
+	}
+	if offset > end {
+		offset = end
+	}
+	return matched[offset:end], total
+}
+
+// CreateNotification creates a new notification.
+func (s *Store) CreateNotification(recipientID, actorID, notifType, targetType, targetID string) (Notification, error) {
+	if recipientID == "" || actorID == "" || notifType == "" {
+		return Notification{}, ErrInvalidInput
+	}
+	// Don't notify yourself
+	if recipientID == actorID {
+		return Notification{}, nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.nextNotifID++
+	notif := Notification{
+		ID:          fmt.Sprintf("n_%d", s.nextNotifID),
+		RecipientID: recipientID,
+		ActorID:     actorID,
+		Type:        notifType,
+		TargetType:  targetType,
+		TargetID:    targetID,
+		CreatedAt:   now(),
+	}
+	s.notifications = append(s.notifications, notif)
+	return notif, nil
+}
+
+// Notifications returns notifications for a user with pagination.
+func (s *Store) Notifications(recipientID string, offset, limit int) ([]Notification, int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	filtered := make([]Notification, 0)
+	for i := len(s.notifications) - 1; i >= 0; i-- {
+		if s.notifications[i].RecipientID == recipientID {
+			filtered = append(filtered, s.notifications[i])
+		}
+	}
+
+	total := len(filtered)
+	if offset < 0 {
+		offset = 0
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	end := offset + limit
+	if end > total {
+		end = total
+	}
+	if offset > end {
+		offset = end
+	}
+	return filtered[offset:end], total
+}
+
+// UnreadNotificationCount returns the count of unread notifications.
+func (s *Store) UnreadNotificationCount(recipientID string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	count := 0
+	for _, n := range s.notifications {
+		if n.RecipientID == recipientID && n.ReadAt == "" {
+			count++
+		}
+	}
+	return count
+}
+
+// MarkNotificationRead marks a single notification as read.
+func (s *Store) MarkNotificationRead(notificationID, recipientID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for i, n := range s.notifications {
+		if n.ID == notificationID && n.RecipientID == recipientID {
+			s.notifications[i].ReadAt = now()
+			return nil
+		}
+	}
+	return ErrNotFound
+}
+
+// MarkAllNotificationsRead marks all notifications for a user as read.
+func (s *Store) MarkAllNotificationsRead(recipientID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	timestamp := now()
+	for i, n := range s.notifications {
+		if n.RecipientID == recipientID && n.ReadAt == "" {
+			s.notifications[i].ReadAt = timestamp
+		}
+	}
+	return nil
 }
