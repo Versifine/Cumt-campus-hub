@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
-import { Layout, List, Card, Avatar, Typography, Button, Empty, Spin, Space, Tag, theme } from 'antd'
+import { useCallback, useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
+import { Layout, List, Card, Avatar, Typography, Button, Empty, Spin, Space, Tag, theme, message } from 'antd'
 import { 
   UserOutlined, 
   CommentOutlined, 
@@ -8,31 +8,13 @@ import {
   UserAddOutlined,
   CheckOutlined
 } from '@ant-design/icons'
+import { getErrorMessage } from '../api/client'
+import { fetchNotifications, markAllNotificationsRead, markNotificationRead, type NotificationItem } from '../api/notifications'
 import SiteHeader from '../components/SiteHeader'
-import { useAuth } from '../context/AuthContext'
-import { getToken } from '../store/auth'
+import { ErrorState } from '../components/StateBlocks'
 
 const { Content } = Layout
 const { Title, Text } = Typography
-
-interface NotificationItem {
-  id: string
-  actor_id: string
-  actor_name: string
-  actor_avatar: string
-  type: 'comment' | 'reply' | 'follow' | 'like'
-  target_type: string
-  target_id: string
-  read: boolean
-  created_at: string
-}
-
-interface NotificationsResponse {
-  data: NotificationItem[]
-  total: number
-  page: number
-  page_size: number
-}
 
 const typeConfig = {
   comment: { icon: <CommentOutlined />, label: '评论了你的帖子', color: 'blue' },
@@ -41,71 +23,52 @@ const typeConfig = {
   like: { icon: <HeartOutlined />, label: '赞了你的内容', color: 'red' },
 }
 
+const pageSize = 20
+
 const Notifications = () => {
-  const { user } = useAuth()
-  const navigate = useNavigate()
   const { token } = theme.useToken()
-  const authToken = getToken()
   
   const [notifications, setNotifications] = useState<NotificationItem[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  const loadNotifications = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const data = await fetchNotifications(page, pageSize)
+      setNotifications(data.data || [])
+      setTotal(data.total)
+    } catch (err) {
+      setError(getErrorMessage(err))
+    } finally {
+      setLoading(false)
+    }
+  }, [page])
 
   useEffect(() => {
-    if (!authToken) {
-      navigate('/login')
-      return
-    }
-
-    const fetchNotifications = async () => {
-      setLoading(true)
-      try {
-        const res = await fetch(`/api/v1/notifications?page=${page}`, {
-          headers: { Authorization: `Bearer ${authToken}` }
-        })
-        if (res.ok) {
-          const data: NotificationsResponse = await res.json()
-          setNotifications(data.data || [])
-          setTotal(data.total)
-        }
-      } catch (err) {
-        console.error('Failed to fetch notifications:', err)
-      } finally {
-        setLoading(false)
-      }
-    }
-
-    fetchNotifications()
-  }, [authToken, page, navigate])
+    void loadNotifications()
+  }, [loadNotifications])
 
   const handleMarkRead = async (id: string) => {
     try {
-      const res = await fetch(`/api/v1/notifications/${id}`, {
-        method: 'PATCH',
-        headers: { Authorization: `Bearer ${authToken}` }
-      })
-      if (res.ok) {
-        setNotifications(prev => 
-          prev.map(n => n.id === id ? { ...n, read: true } : n)
-        )
-      }
+      await markNotificationRead(id)
+      setNotifications(prev => 
+        prev.map(n => n.id === id ? { ...n, read: true } : n)
+      )
     } catch (err) {
-      console.error('Failed to mark as read:', err)
+      message.error(getErrorMessage(err))
     }
   }
 
   const handleMarkAllRead = async () => {
     try {
-      const res = await fetch('/api/v1/notifications/read-all', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${authToken}` }
-      })
-      if (res.ok) {
-        setNotifications(prev => prev.map(n => ({ ...n, read: true })))
-      }
+      await markAllNotificationsRead()
+      setNotifications(prev => prev.map(n => ({ ...n, read: true })))
     } catch (err) {
-      console.error('Failed to mark all as read:', err)
+      message.error(getErrorMessage(err))
     }
   }
 
@@ -198,10 +161,6 @@ const Notifications = () => {
     )
   }
 
-  if (!user) {
-    return null
-  }
-
   return (
     <Layout style={{ minHeight: '100vh', background: '#FAF8F5' }}>
       <SiteHeader />
@@ -220,14 +179,16 @@ const Notifications = () => {
             <div style={{ textAlign: 'center', padding: 48 }}>
               <Spin size="large" />
             </div>
+          ) : error ? (
+            <ErrorState message={error} onRetry={loadNotifications} />
           ) : notifications.length > 0 ? (
             <List
               dataSource={notifications}
               renderItem={renderItem}
-              pagination={total > 20 ? {
+              pagination={total > pageSize ? {
                 current: page,
                 total: total,
-                pageSize: 20,
+                pageSize: pageSize,
                 onChange: setPage,
                 showSizeChanger: false,
               } : false}

@@ -50,14 +50,14 @@ export const fetchReports = async (page = 1, pageSize = 20, status?: string): Pr
   if (status) {
     params.set('status', status)
   }
-  return apiRequest<ReportListResponse>(`/reports?${params.toString()}`)
+  return apiRequest<ReportListResponse>(`/admin/reports?${params.toString()}`)
 }
 
 export const updateReport = async (
   reportId: string, 
   data: { status: string; action?: string; note?: string }
 ): Promise<ReportItem> => {
-  return apiRequest<ReportItem>(`/reports/${reportId}`, {
+  return apiRequest<ReportItem>(`/admin/reports/${reportId}`, {
     method: 'PATCH',
     body: JSON.stringify(data),
   })

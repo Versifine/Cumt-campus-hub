@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { Layout, Menu, Input, Button, Avatar, Dropdown, Space, Badge, theme } from 'antd'
 import { 
@@ -11,7 +11,8 @@ import {
   ReadOutlined,
   BellOutlined
 } from '@ant-design/icons'
-import { useAuth } from '../context/AuthContext'
+import { fetchUnreadCount } from '../api/notifications'
+import { useAuth } from '../context/useAuth'
 import type { MenuProps } from 'antd'
 
 const { Header } = Layout
@@ -23,44 +24,41 @@ const SiteHeader = () => {
   const [searchParams] = useSearchParams()
   const { token } = theme.useToken()
   
-  // Search state
-  const [searchValue, setSearchValue] = useState('')
-  
-  // Notification state
   const [unreadCount, setUnreadCount] = useState(0)
-  
-  // Manage active menu key based on current path
-  const [current, setCurrent] = useState(location.pathname)
 
-  useEffect(() => {
-    // Map paths to menu keys. Simple logic for now.
-    if (location.pathname === '/') setCurrent('/')
-    else if (location.pathname.startsWith('/chat')) setCurrent('/chat')
-    else if (location.pathname.startsWith('/resources')) setCurrent('/resources')
-    else setCurrent('')
+  const current = useMemo(() => {
+    if (location.pathname === '/') return '/'
+    if (location.pathname.startsWith('/chat')) return '/chat'
+    if (location.pathname.startsWith('/resources')) return '/resources'
+    return ''
   }, [location.pathname])
 
-  // Sync search input with URL query param
-  useEffect(() => {
-    if (location.pathname === '/search') {
-      setSearchValue(searchParams.get('q') || '')
+  const searchDefaultValue = useMemo(() => {
+    if (location.pathname !== '/search') {
+      return ''
     }
+    return searchParams.get('q') || ''
   }, [location.pathname, searchParams])
+
+  const searchKey = useMemo(() => {
+    if (location.pathname !== '/search') {
+      return 'search'
+    }
+    return `search:${searchDefaultValue}`
+  }, [location.pathname, searchDefaultValue])
 
   // Fetch unread notification count
   useEffect(() => {
     if (!authToken) {
-      setUnreadCount(0)
       return
     }
 
-    const fetchUnreadCount = async () => {
+    let active = true
+
+    const loadUnreadCount = async () => {
       try {
-        const res = await fetch('/api/v1/notifications/unread-count', {
-          headers: { Authorization: `Bearer ${authToken}` }
-        })
-        if (res.ok) {
-          const data = await res.json()
+        const data = await fetchUnreadCount()
+        if (active) {
           setUnreadCount(data.count || 0)
         }
       } catch (err) {
@@ -68,11 +66,16 @@ const SiteHeader = () => {
       }
     }
 
-    fetchUnreadCount()
+    void loadUnreadCount()
     // Poll every 30 seconds
-    const interval = setInterval(fetchUnreadCount, 30000)
-    return () => clearInterval(interval)
+    const interval = setInterval(loadUnreadCount, 30000)
+    return () => {
+      active = false
+      clearInterval(interval)
+    }
   }, [authToken])
+
+  const displayUnreadCount = authToken ? unreadCount : 0
 
   const handleLogout = () => {
     logout()
@@ -87,7 +90,6 @@ const SiteHeader = () => {
   }
 
   const handleMenuClick: MenuProps['onClick'] = (e) => {
-    setCurrent(e.key)
     navigate(e.key)
   }
 
@@ -179,25 +181,25 @@ const SiteHeader = () => {
 
       {/* Right Side: Search & Actions */}
       <Space size="middle">
-        <Input.Search
-          placeholder="搜索帖子或用户"
-          prefix={<SearchOutlined style={{ color: token.colorTextDescription }} />}
-          style={{ 
-            width: 240, 
-            borderRadius: 999, 
-            background: 'rgba(255,255,255,0.6)' 
-          }}
-          variant="filled"
-          value={searchValue}
-          onChange={(e) => setSearchValue(e.target.value)}
-          onSearch={handleSearch}
-          enterButton={false}
-          allowClear
-        />
+          <Input.Search
+            placeholder="搜索帖子或用户"
+            prefix={<SearchOutlined style={{ color: token.colorTextDescription }} />}
+            style={{ 
+              width: 240, 
+              borderRadius: 999, 
+              background: 'rgba(255,255,255,0.6)' 
+            }}
+            variant="filled"
+            key={searchKey}
+            defaultValue={searchDefaultValue}
+            onSearch={handleSearch}
+            enterButton={false}
+            allowClear
+          />
 
         {user ? (
           <>
-            <Badge count={unreadCount} size="small" offset={[-2, 2]}>
+            <Badge count={displayUnreadCount} size="small" offset={[-2, 2]}>
               <Button 
                 type="text" 
                 shape="circle"

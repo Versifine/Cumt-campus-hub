@@ -1,11 +1,4 @@
-import {
-  createContext,
-  useContext,
-  useEffect,
-  useMemo,
-  useState,
-  type ReactNode,
-} from 'react'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { fetchCurrentUser } from '../api/users'
 import {
   clearAuth,
@@ -14,25 +7,22 @@ import {
   setStoredUser,
   type AuthUser,
 } from '../store/auth'
-
-type AuthContextValue = {
-  user: AuthUser | null
-  checking: boolean
-  setUser: (user: AuthUser | null) => void
-  logout: () => void
-}
-
-const AuthContext = createContext<AuthContextValue | undefined>(undefined)
+import { AuthContext } from './auth-context'
 
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
-  const [user, setUser] = useState<AuthUser | null>(() => getStoredUser())
+  const [user, setUser] = useState<AuthUser | null>(() => {
+    const storedToken = getToken()
+    return storedToken ? getStoredUser() : null
+  })
   const [checking, setChecking] = useState<boolean>(() => Boolean(getToken()))
+  const token = getToken()
 
   useEffect(() => {
-    const token = getToken()
-    if (!token) {
-      setChecking(false)
-      setUser(null)
+    const storedToken = getToken()
+    if (!storedToken) {
+      if (getStoredUser()) {
+        clearAuth()
+      }
       return
     }
 
@@ -55,16 +45,16 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       })
   }, [])
 
-  useEffect(() => {
-    const handler = () => {
-      clearAuth()
-      setUser(null)
-      setChecking(false)
-    }
-
-    window.addEventListener('auth:invalid', handler)
-    return () => window.removeEventListener('auth:invalid', handler)
+  const handleAuthInvalid = useCallback(() => {
+    clearAuth()
+    setUser(null)
+    setChecking(false)
   }, [])
+
+  useEffect(() => {
+    window.addEventListener('auth:invalid', handleAuthInvalid)
+    return () => window.removeEventListener('auth:invalid', handleAuthInvalid)
+  }, [handleAuthInvalid])
 
   const logout = () => {
     clearAuth()
@@ -75,19 +65,12 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     () => ({
       user,
       checking,
+      token,
       setUser,
       logout,
     }),
-    [user, checking],
+    [user, checking, token],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
-}
-
-export const useAuth = (): AuthContextValue => {
-  const context = useContext(AuthContext)
-  if (!context) {
-    throw new Error('useAuth must be used within AuthProvider')
-  }
-  return context
 }

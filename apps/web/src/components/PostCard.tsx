@@ -29,7 +29,7 @@ import {
 import type { AttachmentItem, PostItem } from '../api/posts'
 import { clearVote, votePost } from '../api/posts'
 import { getErrorMessage } from '../api/client'
-import { useAuth } from '../context/AuthContext'
+import { useAuth } from '../context/useAuth'
 import { formatRelativeTimeUTC8 } from '../utils/time'
 import { extractMediaFromContent, type MediaItem } from '../utils/media'
 import ReportModal from './ReportModal'

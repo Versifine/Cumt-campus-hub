@@ -46,7 +46,7 @@ import { RichContent, RichEditor, type RichEditorHandle, type RichEditorValue } 
 import SiteHeader from '../components/SiteHeader'
 import { ErrorState } from '../components/StateBlocks'
 import ReportModal from '../components/ReportModal'
-import { useAuth } from '../context/AuthContext'
+import { useAuth } from '../context/useAuth'
 import { useInfiniteScroll } from '../hooks/useInfiniteScroll'
 import { extractMediaFromContent, normalizeMediaFromAttachments } from '../utils/media'
 import { clearDraft, loadDraft, saveDraft } from '../utils/drafts'
@@ -232,7 +232,7 @@ const PostPlaceholder = () => {
     error: null,
   })
   const {
-    data: comments = [],
+    data: commentsData,
     isLoading: commentsLoading,
     error: commentsError,
     refetch: refetchComments,
@@ -241,6 +241,7 @@ const PostPlaceholder = () => {
     queryFn: () => fetchComments(id ?? ''),
     enabled: Boolean(id),
   })
+  const comments = useMemo(() => commentsData ?? [], [commentsData])
   const commentsErrorMessage = commentsError ? getErrorMessage(commentsError) : null
   
   // Active reply target ID (null means no active reply)
