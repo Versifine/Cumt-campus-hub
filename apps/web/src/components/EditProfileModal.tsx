@@ -5,7 +5,7 @@ import type { UploadProps } from 'antd/es/upload/interface'
 import { uploadInlineImage } from '../api/uploads'
 import { updateCurrentUser, type CurrentUser } from '../api/users'
 import { getErrorMessage } from '../api/client'
-import { useAuth } from '../context/AuthContext'
+import { useAuth } from '../context/useAuth'
 import { setStoredUser } from '../store/auth'
 
 type EditProfileModalProps = {

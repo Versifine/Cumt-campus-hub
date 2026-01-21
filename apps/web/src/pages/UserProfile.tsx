@@ -37,7 +37,7 @@ import SiteHeader from '../components/SiteHeader'
 import EditProfileModal from '../components/EditProfileModal'
 import { ErrorState } from '../components/StateBlocks'
 import { PostSkeletonList } from '../components/Skeletons'
-import { useAuth } from '../context/AuthContext'
+import { useAuth } from '../context/useAuth'
 import { useInfiniteScroll } from '../hooks/useInfiniteScroll'
 import { formatRelativeTimeUTC8 } from '../utils/time'
 

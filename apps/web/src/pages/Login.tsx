@@ -15,7 +15,7 @@ import { UserOutlined, LockOutlined } from '@ant-design/icons'
 import { login, register } from '../api/auth'
 import { getErrorMessage } from '../api/client'
 import SiteHeader from '../components/SiteHeader'
-import { useAuth } from '../context/AuthContext'
+import { useAuth } from '../context/useAuth'
 import { consumeAuthMessage, setAuth } from '../store/auth'
 
 const { Content } = Layout

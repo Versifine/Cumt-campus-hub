@@ -17,7 +17,7 @@ import { createPost } from '../api/posts'
 import { uploadInlineImage } from '../api/uploads'
 import { RichEditor, type RichEditorHandle, type RichEditorValue } from '../components/rich-editor'
 import SiteHeader from '../components/SiteHeader'
-import { useAuth } from '../context/AuthContext'
+import { useAuth } from '../context/useAuth'
 import { useBoards } from '../hooks/useBoards'
 import { clearDraft, loadDraft, saveDraft } from '../utils/drafts'
 
@@ -113,7 +113,7 @@ const Submit = () => {
       throw new Error('unauthorized')
     }
     if (file.size > maxInlineImageSize) {
-      message.error('图片过大')
+      message.error('图片不能超过 100MB')
       throw new Error('too large')
     }
     return uploadInlineImage(file)
@@ -222,7 +222,7 @@ const Submit = () => {
                 disabled={submitting}
               />
               <Text type="secondary" style={{ fontSize: '0.8rem', marginTop: 8, display: 'block' }}>
-                支持拖拽上传图片
+                支持拖拽上传图片，单张不超过 100MB
               </Text>
             </Form.Item>
 

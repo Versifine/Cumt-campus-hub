@@ -14,7 +14,7 @@ import {
 } from 'antd'
 import { SendOutlined, UserOutlined, RobotOutlined, SyncOutlined } from '@ant-design/icons'
 import SiteHeader from '../components/SiteHeader'
-import { useAuth } from '../context/AuthContext'
+import { useAuth } from '../context/useAuth'
 import { getToken } from '../store/auth'
 import { formatRelativeTimeUTC8 } from '../utils/time'
 
