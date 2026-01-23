@@ -35,6 +35,18 @@ jobs:
         GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o server_linux ./server
 
     # 4. 传送文件 (前后端分开传)
+    - name: Create directories on server
+      uses: appleboy/ssh-action@master
+      with:
+        host: ${{ secrets.SERVER_HOST }}
+        username: ${{ secrets.SERVER_USER }}
+        key: ${{ secrets.SSH_PRIVATE_KEY }}
+        timeout: 30s
+        use_insecure_cipher: true
+        script: |
+          mkdir -p /var/www/cumt-hub/dist
+          mkdir -p /root/cumt-hub
+
     - name: Deploy Frontend
       uses: appleboy/scp-action@master
       with:
@@ -44,6 +56,9 @@ jobs:
         source: "apps/web/dist/*"
         target: "/var/www/cumt-hub/dist/"
         strip_components: 3
+        timeout: 120s
+        debug: true
+        use_insecure_cipher: true
 
     - name: Deploy Backend
       uses: appleboy/scp-action@master
@@ -53,6 +68,9 @@ jobs:
         key: ${{ secrets.SSH_PRIVATE_KEY }}
         source: "server_linux"
         target: "/root/cumt-hub/"
+        timeout: 120s
+        debug: true
+        use_insecure_cipher: true
 
     # 5. 重启后端服务 (前端文件覆盖即生效)
     - name: Restart Backend
