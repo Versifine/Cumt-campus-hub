@@ -1,4 +1,4 @@
-# docs/spec.md — campus-hub 规格说明（v0.3）
+# docs/spec.md — campus-hub 规格说明（v0.4）
 
 > 产品名（暂定）：校圈
 
@@ -19,7 +19,7 @@
 ### 1.2 非目标（明确不做）
 
 - 不做复杂推荐算法
-- 不做商业化 / 广告 / 积分体系
+- 不做商业化 / 广告 / 积分商城
 - 不做完整 IM（已读回执、离线推送、消息撤回等）
 - 不做正式实名认证或学号系统
 
@@ -48,6 +48,7 @@
 
 - 注册/登录（账号 + 密码 + token）
 - 用户资料（头像/封面/简介）
+- 经验与等级（exp + level + 称号）
 - 用户主页（Profile v1）：`/u/:id`
 - 关注/粉丝（统计 + 列表接口）
 
@@ -57,6 +58,9 @@
 - 帖子（Posts）：富文本内容（TipTap），支持图片上传
 - 评论（Comments）：富文本，支持楼中楼（parent_id）
 - 点赞 / 点踩 / 分值（持久化）
+- 热门排序（最新/热门切换）
+- 浏览量统计（view_count）
+- 楼层号（仅顶层评论）
 - 分享与评论数展示
 
 ### 3.3 实时聊天
@@ -75,6 +79,7 @@
 
 - 举报入口与管理员处理
 - 发帖/评论限流
+- 生产日志（按天切分）
 
 ---
 
@@ -87,6 +92,9 @@
 - avatar
 - cover
 - bio
+- exp
+- level（计算属性）
+- level_title（计算属性）
 - followers_count
 - following_count
 - created_at
@@ -107,6 +115,7 @@
 - content_json（TipTap JSON）
 - tags（string[]）
 - attachments（文件 ID 列表，可选）
+- view_count
 - created_at
 - score
 - comment_count
@@ -122,6 +131,7 @@
 - content_json
 - tags
 - attachments
+- floor（仅顶层评论）
 - created_at
 - score
 - my_vote

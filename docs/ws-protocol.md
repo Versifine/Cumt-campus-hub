@@ -1,4 +1,4 @@
-# docs/ws-protocol.md — campus-hub WebSocket 协议（v0.2）
+# docs/ws-protocol.md — campus-hub WebSocket 协议（v0.3）
 
 ## 连接方式
 
@@ -27,3 +27,20 @@
 - `chat.history.result` 历史结果
 - `system.ping` / `system.pong`
 - `error` 错误事件
+
+## chat.message 数据结构
+
+```json
+{
+  "id": "m_1",
+  "roomId": "room_global",
+  "sender": {
+    "id": "u_1",
+    "nickname": "alice",
+    "level": 2,
+    "level_title": "进阶"
+  },
+  "content": "hello",
+  "created_at": "2025-01-01T00:00:00Z"
+}
+```

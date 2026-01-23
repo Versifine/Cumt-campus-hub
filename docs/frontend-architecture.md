@@ -19,7 +19,7 @@
 ## 组件与布局
 
 - Layout：`SiteHeader` + `Layout` + 页面 Card 结构
-- 常用组件：`PostCard`, `ReportModal`, `EditProfileModal`, `RichEditor`
+- 常用组件：`PostCard`, `LevelBadge`, `ReportModal`, `EditProfileModal`, `RichEditor`
 - 图片展示：Antd `<Image>` 与 `<Image.PreviewGroup>`
 
 ## 状态与数据流
@@ -27,6 +27,11 @@
 - 登录态：`AuthContext` + localStorage
 - API：`apiRequest` 统一处理鉴权与错误
 - 实时聊天：`/ws/chat` WebSocket
+
+## 交互细节
+
+- 帖子详情支持评论正序/逆序切换与楼层展示
+- 用户主页评论历史支持跳转到指定楼层
 
 ## 目录结构
 

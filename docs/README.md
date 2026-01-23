@@ -23,6 +23,7 @@
 - 内存数据存储：`server/store/store.go`
 - SQLite 数据库存储：`server/store/sqlite_store.go`
 - HTTP JSON 工具：`server/internal/transport/transport.go`
+- 生产日志目录：`LOG_DIR`（默认 `server/logs`）
 - 功能模块：
   - 认证：`server/auth/handler.go`
   - 社区（板块/帖子/评论）：`server/community/handlers.go`
