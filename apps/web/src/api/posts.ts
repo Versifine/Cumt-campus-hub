@@ -4,6 +4,8 @@ export type PostAuthor = {
   id: string
   nickname: string
   avatar_url?: string
+  level?: number
+  level_title?: string
 }
 
 export type AttachmentItem = {
@@ -54,6 +56,7 @@ export type PostDetail = {
   score?: number
   my_vote?: number
   comment_count?: number
+  view_count?: number
 }
 
 export type CreatePostInput = {
@@ -90,6 +93,7 @@ export type CommentItem = {
   attachments?: AttachmentItem[]
   created_at: string
   parent_id?: string | null
+  floor?: number
   score?: number
   my_vote?: number
 }
@@ -104,6 +108,7 @@ export type CreateCommentResponse = {
   attachments?: AttachmentItem[]
   created_at: string
   parent_id?: string | null
+  floor?: number
   score?: number
   my_vote?: number
 }
@@ -129,6 +134,7 @@ export const fetchPosts = (
   pageSize: number,
   boardId?: string,
   authorId?: string,
+  sort?: 'latest' | 'hot',
 ): Promise<PostListResponse> => {
   const params = new URLSearchParams({
     page: String(page),
@@ -141,6 +147,10 @@ export const fetchPosts = (
 
   if (authorId) {
     params.set('author_id', authorId)
+  }
+
+  if (sort) {
+    params.set('sort', sort)
   }
 
   return apiRequest<PostListResponse>(`/posts?${params.toString()}`)

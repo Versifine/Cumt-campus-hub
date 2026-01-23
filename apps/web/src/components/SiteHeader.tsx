@@ -14,6 +14,7 @@ import {
 import { fetchUnreadCount } from '../api/notifications'
 import { useAuth } from '../context/useAuth'
 import type { MenuProps } from 'antd'
+import LevelBadge from './LevelBadge'
 
 const { Header } = Layout
 
@@ -224,9 +225,12 @@ const SiteHeader = () => {
                 >
                   {user.nickname?.[0]?.toUpperCase()}
                 </Avatar>
-                <span style={{ fontWeight: 500, color: token.colorText }}>
-                  {user.nickname}
-                </span>
+                <Space size={6} wrap>
+                  <span style={{ fontWeight: 500, color: token.colorText }}>
+                    {user.nickname}
+                  </span>
+                  <LevelBadge level={user.level} title={user.level_title} compact />
+                </Space>
               </Space>
             </Dropdown>
           </>

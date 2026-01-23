@@ -5,6 +5,7 @@ import { UserOutlined, LikeOutlined, MessageOutlined, ClockCircleOutlined } from
 import { useInfiniteQuery } from '@tanstack/react-query'
 import { getErrorMessage } from '../api/client'
 import { fetchSearchPosts, fetchSearchUsers } from '../api/search'
+import LevelBadge from '../components/LevelBadge'
 import SiteHeader from '../components/SiteHeader'
 import { ErrorState } from '../components/StateBlocks'
 import { useInfiniteScroll } from '../hooks/useInfiniteScroll'
@@ -17,6 +18,8 @@ interface PostResult {
   board_id: string
   author_id: string
   author_name: string
+  author_level?: number
+  author_level_title?: string
   title: string
   content: string
   tags: string[]
@@ -31,6 +34,8 @@ interface UserResult {
   avatar: string
   bio: string
   created_at: string
+  level?: number
+  level_title?: string
 }
 
 const Search = () => {
@@ -123,10 +128,13 @@ const Search = () => {
             {post.content}
           </Paragraph>
           <Space split={<span style={{ color: token.colorTextQuaternary }}>·</span>}>
-            <Text type="secondary">
-              <UserOutlined style={{ marginRight: 4 }} />
-              {post.author_name || '匿名用户'}
-            </Text>
+            <Space size={6} wrap>
+              <Text type="secondary">
+                <UserOutlined style={{ marginRight: 4 }} />
+                {post.author_name || '匿名用户'}
+              </Text>
+              <LevelBadge level={post.author_level} title={post.author_level_title} compact />
+            </Space>
             <Text type="secondary">
               <LikeOutlined style={{ marginRight: 4 }} />
               {post.score}
@@ -170,7 +178,10 @@ const Search = () => {
           </Avatar>
           <div style={{ flex: 1, minWidth: 0 }}>
             <Title level={5} style={{ marginBottom: 4 }}>
-              {user.nickname}
+              <Space size={8} wrap>
+                <span>{user.nickname}</span>
+                <LevelBadge level={user.level} title={user.level_title} compact />
+              </Space>
             </Title>
             <Paragraph 
               ellipsis={{ rows: 2 }} 

@@ -75,6 +75,7 @@ func (s *SQLiteStore) migrate() error {
 			avatar TEXT NOT NULL DEFAULT '',
 			cover TEXT NOT NULL DEFAULT '',
 			bio TEXT NOT NULL DEFAULT '',
+			exp INTEGER NOT NULL DEFAULT 0,
 			created_at TEXT NOT NULL
 		);`,
 		`CREATE TABLE IF NOT EXISTS accounts (
@@ -103,6 +104,7 @@ func (s *SQLiteStore) migrate() error {
 			content_json TEXT NOT NULL,
 			tags TEXT NOT NULL,
 			attachments TEXT NOT NULL,
+			view_count INTEGER NOT NULL DEFAULT 0,
 			created_at TEXT NOT NULL,
 			deleted_at TEXT
 		);`,
@@ -117,6 +119,7 @@ func (s *SQLiteStore) migrate() error {
 			content_json TEXT NOT NULL,
 			tags TEXT NOT NULL,
 			attachments TEXT NOT NULL,
+			floor INTEGER NOT NULL DEFAULT 0,
 			created_at TEXT NOT NULL,
 			deleted_at TEXT
 		);`,
@@ -223,6 +226,11 @@ func (s *SQLiteStore) migrate() error {
 			return err
 		}
 	}
+	if _, err := s.db.Exec(`ALTER TABLE users ADD COLUMN exp INTEGER NOT NULL DEFAULT 0;`); err != nil {
+		if !isSQLiteDuplicateColumnError(err) {
+			return err
+		}
+	}
 
 	// Backward compatible migration for databases created before password auth.
 	if _, err := s.db.Exec(`ALTER TABLE accounts ADD COLUMN password_hash TEXT;`); err != nil {
@@ -304,6 +312,37 @@ func (s *SQLiteStore) migrate() error {
 		if !isSQLiteDuplicateColumnError(err) {
 			return err
 		}
+	}
+	if _, err := s.db.Exec(`ALTER TABLE posts ADD COLUMN view_count INTEGER NOT NULL DEFAULT 0;`); err != nil {
+		if !isSQLiteDuplicateColumnError(err) {
+			return err
+		}
+	}
+	if _, err := s.db.Exec(`ALTER TABLE comments ADD COLUMN floor INTEGER NOT NULL DEFAULT 0;`); err != nil {
+		if !isSQLiteDuplicateColumnError(err) {
+			return err
+		}
+	}
+	if _, err := s.db.Exec(
+		`UPDATE comments
+		 SET floor = 0
+		 WHERE parent_id IS NOT NULL
+		   AND TRIM(parent_id) != '';`,
+	); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(
+		`UPDATE comments
+		 SET floor = (
+			SELECT COUNT(1)
+			FROM comments c2
+			WHERE c2.post_id = comments.post_id
+			  AND (c2.parent_id IS NULL OR TRIM(c2.parent_id) = '')
+			  AND c2.seq <= comments.seq
+		 )
+		 WHERE parent_id IS NULL OR TRIM(parent_id) = '';`,
+	); err != nil {
+		return err
 	}
 	return nil
 }
@@ -444,11 +483,12 @@ func (s *SQLiteStore) Register(account, password string) (string, User, error) {
 		user = User{
 			ID:        fmt.Sprintf("u_%d", seq),
 			Nickname:  trimmedAccount,
+			Exp:       0,
 			CreatedAt: nowRFC3339(),
 		}
 
 		if _, err := tx.Exec(
-			`INSERT INTO users(seq, id, nickname, created_at, avatar, cover, bio) VALUES(?, ?, ?, ?, '', '', '');`,
+			`INSERT INTO users(seq, id, nickname, created_at, avatar, cover, bio, exp) VALUES(?, ?, ?, ?, '', '', '', 0);`,
 			seq,
 			user.ID,
 			user.Nickname,
@@ -472,8 +512,8 @@ func (s *SQLiteStore) Register(account, password string) (string, User, error) {
 		if _, err := tx.Exec(`UPDATE accounts SET password_hash = ? WHERE account = ?;`, passwordHash, trimmedAccount); err != nil {
 			return "", User{}, err
 		}
-		if err := tx.QueryRow(`SELECT id, nickname, created_at, avatar, cover, bio FROM users WHERE id = ?;`, userID).
-			Scan(&user.ID, &user.Nickname, &user.CreatedAt, &user.Avatar, &user.Cover, &user.Bio); err != nil {
+		if err := tx.QueryRow(`SELECT id, nickname, created_at, avatar, cover, bio, exp FROM users WHERE id = ?;`, userID).
+			Scan(&user.ID, &user.Nickname, &user.CreatedAt, &user.Avatar, &user.Cover, &user.Bio, &user.Exp); err != nil {
 			return "", User{}, err
 		}
 	}
@@ -507,12 +547,12 @@ func (s *SQLiteStore) Login(account, password string) (string, User, error) {
 		passwordHash sql.NullString
 	)
 	err = tx.QueryRow(
-		`SELECT u.id, u.nickname, u.created_at, u.avatar, u.cover, u.bio, a.password_hash
+		`SELECT u.id, u.nickname, u.created_at, u.avatar, u.cover, u.bio, u.exp, a.password_hash
 		 FROM accounts a
 		 JOIN users u ON u.id = a.user_id
 		 WHERE a.account = ?;`,
 		trimmedAccount,
-	).Scan(&user.ID, &user.Nickname, &user.CreatedAt, &user.Avatar, &user.Cover, &user.Bio, &passwordHash)
+	).Scan(&user.ID, &user.Nickname, &user.CreatedAt, &user.Avatar, &user.Cover, &user.Bio, &user.Exp, &passwordHash)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", User{}, ErrInvalidCredentials
 	}
@@ -538,12 +578,12 @@ func (s *SQLiteStore) Login(account, password string) (string, User, error) {
 func (s *SQLiteStore) UserByToken(token string) (User, bool) {
 	var user User
 	err := s.db.QueryRow(
-		`SELECT u.id, u.nickname, u.created_at, u.avatar, u.cover, u.bio
+		`SELECT u.id, u.nickname, u.created_at, u.avatar, u.cover, u.bio, u.exp
 		 FROM users u
 		 JOIN tokens t ON t.user_id = u.id
 		 WHERE t.token = ?;`,
 		token,
-	).Scan(&user.ID, &user.Nickname, &user.CreatedAt, &user.Avatar, &user.Cover, &user.Bio)
+	).Scan(&user.ID, &user.Nickname, &user.CreatedAt, &user.Avatar, &user.Cover, &user.Bio, &user.Exp)
 	if err != nil {
 		return User{}, false
 	}
@@ -552,8 +592,8 @@ func (s *SQLiteStore) UserByToken(token string) (User, bool) {
 
 func (s *SQLiteStore) GetUser(userID string) (User, bool) {
 	var user User
-	if err := s.db.QueryRow(`SELECT id, nickname, created_at, avatar, cover, bio FROM users WHERE id = ?;`, userID).
-		Scan(&user.ID, &user.Nickname, &user.CreatedAt, &user.Avatar, &user.Cover, &user.Bio); err != nil {
+	if err := s.db.QueryRow(`SELECT id, nickname, created_at, avatar, cover, bio, exp FROM users WHERE id = ?;`, userID).
+		Scan(&user.ID, &user.Nickname, &user.CreatedAt, &user.Avatar, &user.Cover, &user.Bio, &user.Exp); err != nil {
 		return User{}, false
 	}
 	return user, true
@@ -580,8 +620,8 @@ func (s *SQLiteStore) UpdateUser(userID, nickname, bio, avatar, cover string) (U
 	// But to be safe and robust, let's fetch current first.
 
 	var user User
-	if err := tx.QueryRow(`SELECT id, nickname, created_at, avatar, cover, bio FROM users WHERE id = ?;`, trimmedID).
-		Scan(&user.ID, &user.Nickname, &user.CreatedAt, &user.Avatar, &user.Cover, &user.Bio); err != nil {
+	if err := tx.QueryRow(`SELECT id, nickname, created_at, avatar, cover, bio, exp FROM users WHERE id = ?;`, trimmedID).
+		Scan(&user.ID, &user.Nickname, &user.CreatedAt, &user.Avatar, &user.Cover, &user.Bio, &user.Exp); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return User{}, ErrNotFound
 		}
@@ -615,6 +655,30 @@ func (s *SQLiteStore) UpdateUser(userID, nickname, bio, avatar, cover string) (U
 		return User{}, err
 	}
 	return user, nil
+}
+
+func (s *SQLiteStore) AddUserExp(userID string, delta int) error {
+	trimmedID := strings.TrimSpace(userID)
+	if trimmedID == "" {
+		return ErrInvalidInput
+	}
+
+	res, err := s.db.Exec(
+		`UPDATE users
+		 SET exp = CASE WHEN exp + ? < 0 THEN 0 ELSE exp + ? END
+		 WHERE id = ?;`,
+		delta,
+		delta,
+		trimmedID,
+	)
+	if err != nil {
+		return err
+	}
+	affected, err := res.RowsAffected()
+	if err == nil && affected == 0 {
+		return ErrNotFound
+	}
+	return err
 }
 
 func (s *SQLiteStore) Boards() []Board {
@@ -652,18 +716,18 @@ func (s *SQLiteStore) Posts(boardID string) []Post {
 	)
 	if boardID == "" {
 		rows, err = s.db.Query(
-		`SELECT id, board_id, author_id, title, content, content_json, tags, attachments, created_at
+			`SELECT id, board_id, author_id, title, content, content_json, tags, attachments, view_count, created_at
 		 FROM posts
 		 WHERE deleted_at IS NULL OR TRIM(deleted_at) = ''
-		 ORDER BY seq DESC;`,
+		 ORDER BY created_at DESC, seq DESC;`,
 		)
 	} else {
 		rows, err = s.db.Query(
-			`SELECT id, board_id, author_id, title, content, content_json, tags, attachments, created_at
+			`SELECT id, board_id, author_id, title, content, content_json, tags, attachments, view_count, created_at
 			 FROM posts
 			 WHERE board_id = ?
 			   AND (deleted_at IS NULL OR TRIM(deleted_at) = '')
-			 ORDER BY seq DESC;`,
+			 ORDER BY created_at DESC, seq DESC;`,
 			boardID,
 		)
 	}
@@ -678,7 +742,7 @@ func (s *SQLiteStore) Posts(boardID string) []Post {
 		var contentJSON sql.NullString
 		var tags sql.NullString
 		var attachments sql.NullString
-		if err := rows.Scan(&p.ID, &p.BoardID, &p.AuthorID, &p.Title, &p.Content, &contentJSON, &tags, &attachments, &p.CreatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.BoardID, &p.AuthorID, &p.Title, &p.Content, &contentJSON, &tags, &attachments, &p.ViewCount, &p.CreatedAt); err != nil {
 			return nil
 		}
 		p.ContentJSON = strings.TrimSpace(contentJSON.String)
@@ -696,12 +760,12 @@ func (s *SQLiteStore) GetPost(postID string) (Post, bool) {
 	var tags sql.NullString
 	var attachments sql.NullString
 	err := s.db.QueryRow(
-		`SELECT id, board_id, author_id, title, content, content_json, tags, attachments, created_at, deleted_at
+		`SELECT id, board_id, author_id, title, content, content_json, tags, attachments, view_count, created_at, deleted_at
 		 FROM posts
 		 WHERE id = ?
 		   AND (deleted_at IS NULL OR TRIM(deleted_at) = '');`,
 		postID,
-	).Scan(&post.ID, &post.BoardID, &post.AuthorID, &post.Title, &post.Content, &contentJSON, &tags, &attachments, &post.CreatedAt, &deletedAt)
+	).Scan(&post.ID, &post.BoardID, &post.AuthorID, &post.Title, &post.Content, &contentJSON, &tags, &attachments, &post.ViewCount, &post.CreatedAt, &deletedAt)
 	if err != nil {
 		return Post{}, false
 	}
@@ -710,6 +774,26 @@ func (s *SQLiteStore) GetPost(postID string) (Post, bool) {
 	post.Attachments = decodeAttachmentIDs(attachments.String)
 	post.DeletedAt = strings.TrimSpace(deletedAt.String)
 	return post, true
+}
+
+func (s *SQLiteStore) IncrementPostViewCount(postID string) error {
+	trimmed := strings.TrimSpace(postID)
+	if trimmed == "" {
+		return ErrInvalidInput
+	}
+
+	res, err := s.db.Exec(
+		`UPDATE posts SET view_count = view_count + 1 WHERE id = ?;`,
+		trimmed,
+	)
+	if err != nil {
+		return err
+	}
+	affected, err := res.RowsAffected()
+	if err == nil && affected == 0 {
+		return ErrNotFound
+	}
+	return err
 }
 
 func (s *SQLiteStore) CreatePost(boardID, authorID, title, content, contentJSON string, tags, attachments []string) Post {
@@ -733,12 +817,13 @@ func (s *SQLiteStore) CreatePost(boardID, authorID, title, content, contentJSON 
 		ContentJSON: contentJSON,
 		Tags:        tags,
 		Attachments: attachments,
+		ViewCount:   0,
 		CreatedAt:   nowRFC3339(),
 	}
 
 	if _, err := tx.Exec(
-		`INSERT INTO posts(seq, id, board_id, author_id, title, content, content_json, tags, attachments, created_at, deleted_at)
-		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL);`,
+		`INSERT INTO posts(seq, id, board_id, author_id, title, content, content_json, tags, attachments, view_count, created_at, deleted_at)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL);`,
 		seq,
 		post.ID,
 		post.BoardID,
@@ -748,6 +833,7 @@ func (s *SQLiteStore) CreatePost(boardID, authorID, title, content, contentJSON 
 		post.ContentJSON,
 		encodeTags(post.Tags),
 		encodeAttachmentIDs(post.Attachments),
+		0,
 		post.CreatedAt,
 	); err != nil {
 		return Post{}
@@ -790,7 +876,7 @@ func (s *SQLiteStore) SoftDeletePost(postID, actorUserID string, isAdmin bool) e
 
 func (s *SQLiteStore) Comments(postID string) []Comment {
 	rows, err := s.db.Query(
-		`SELECT id, post_id, parent_id, author_id, content, content_json, tags, attachments, created_at
+		`SELECT id, post_id, parent_id, author_id, content, content_json, tags, attachments, floor, created_at
 		 FROM comments
 		 WHERE post_id = ?
 		   AND (deleted_at IS NULL OR TRIM(deleted_at) = '')
@@ -809,7 +895,7 @@ func (s *SQLiteStore) Comments(postID string) []Comment {
 		var contentJSON sql.NullString
 		var tags sql.NullString
 		var attachments sql.NullString
-		if err := rows.Scan(&c.ID, &c.PostID, &parentID, &c.AuthorID, &c.Content, &contentJSON, &tags, &attachments, &c.CreatedAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.PostID, &parentID, &c.AuthorID, &c.Content, &contentJSON, &tags, &attachments, &c.Floor, &c.CreatedAt); err != nil {
 			return nil
 		}
 		c.ParentID = strings.TrimSpace(parentID.String)
@@ -877,14 +963,14 @@ func (s *SQLiteStore) GetComment(postID, commentID string) (Comment, bool) {
 	var tags sql.NullString
 	var attachments sql.NullString
 	err := s.db.QueryRow(
-		`SELECT id, post_id, parent_id, author_id, content, content_json, tags, attachments, created_at, deleted_at
+		`SELECT id, post_id, parent_id, author_id, content, content_json, tags, attachments, floor, created_at, deleted_at
 		 FROM comments
 		 WHERE post_id = ?
 		   AND id = ?
 		   AND (deleted_at IS NULL OR TRIM(deleted_at) = '');`,
 		postID,
 		commentID,
-	).Scan(&comment.ID, &comment.PostID, &parentID, &comment.AuthorID, &comment.Content, &contentJSON, &tags, &attachments, &comment.CreatedAt, &deletedAt)
+	).Scan(&comment.ID, &comment.PostID, &parentID, &comment.AuthorID, &comment.Content, &contentJSON, &tags, &attachments, &comment.Floor, &comment.CreatedAt, &deletedAt)
 	if err != nil {
 		return Comment{}, false
 	}
@@ -908,21 +994,38 @@ func (s *SQLiteStore) CreateComment(postID, authorID, content, contentJSON, pare
 		return Comment{}
 	}
 
+	trimmedParent := strings.TrimSpace(parentID)
+	floor := 0
+	if trimmedParent == "" {
+		var maxFloor int
+		if err := tx.QueryRow(
+			`SELECT COALESCE(MAX(floor), 0)
+			 FROM comments
+			 WHERE post_id = ?
+			   AND (parent_id IS NULL OR TRIM(parent_id) = '');`,
+			postID,
+		).Scan(&maxFloor); err != nil {
+			return Comment{}
+		}
+		floor = maxFloor + 1
+	}
+
 	comment := Comment{
 		ID:          fmt.Sprintf("c_%d", seq),
 		PostID:      postID,
-		ParentID:    parentID,
+		ParentID:    trimmedParent,
 		AuthorID:    authorID,
 		Content:     content,
 		ContentJSON: contentJSON,
 		Tags:        tags,
 		Attachments: attachments,
+		Floor:       floor,
 		CreatedAt:   nowRFC3339(),
 	}
 
 	if _, err := tx.Exec(
-		`INSERT INTO comments(seq, id, post_id, parent_id, author_id, content, content_json, tags, attachments, created_at, deleted_at)
-		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL);`,
+		`INSERT INTO comments(seq, id, post_id, parent_id, author_id, content, content_json, tags, attachments, floor, created_at, deleted_at)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL);`,
 		seq,
 		comment.ID,
 		comment.PostID,
@@ -932,6 +1035,7 @@ func (s *SQLiteStore) CreateComment(postID, authorID, content, contentJSON, pare
 		comment.ContentJSON,
 		encodeTags(comment.Tags),
 		encodeAttachmentIDs(comment.Attachments),
+		comment.Floor,
 		comment.CreatedAt,
 	); err != nil {
 		return Comment{}
@@ -1561,7 +1665,7 @@ func (s *SQLiteStore) Followers(userID string, offset, limit int) ([]User, int) 
 	}
 
 	rows, err := s.db.Query(
-		`SELECT u.id, u.nickname, u.created_at, u.avatar, u.cover, u.bio
+		`SELECT u.id, u.nickname, u.created_at, u.avatar, u.cover, u.bio, u.exp
 		 FROM follows f
 		 JOIN users u ON u.id = f.follower_id
 		 WHERE f.followee_id = ?
@@ -1577,7 +1681,7 @@ func (s *SQLiteStore) Followers(userID string, offset, limit int) ([]User, int) 
 	out := make([]User, 0, limit)
 	for rows.Next() {
 		var user User
-		if err := rows.Scan(&user.ID, &user.Nickname, &user.CreatedAt, &user.Avatar, &user.Cover, &user.Bio); err != nil {
+		if err := rows.Scan(&user.ID, &user.Nickname, &user.CreatedAt, &user.Avatar, &user.Cover, &user.Bio, &user.Exp); err != nil {
 			return nil, 0
 		}
 		out = append(out, user)
@@ -1599,7 +1703,7 @@ func (s *SQLiteStore) Following(userID string, offset, limit int) ([]User, int) 
 	}
 
 	rows, err := s.db.Query(
-		`SELECT u.id, u.nickname, u.created_at, u.avatar, u.cover, u.bio
+		`SELECT u.id, u.nickname, u.created_at, u.avatar, u.cover, u.bio, u.exp
 		 FROM follows f
 		 JOIN users u ON u.id = f.followee_id
 		 WHERE f.follower_id = ?
@@ -1615,7 +1719,7 @@ func (s *SQLiteStore) Following(userID string, offset, limit int) ([]User, int) 
 	out := make([]User, 0, limit)
 	for rows.Next() {
 		var user User
-		if err := rows.Scan(&user.ID, &user.Nickname, &user.CreatedAt, &user.Avatar, &user.Cover, &user.Bio); err != nil {
+		if err := rows.Scan(&user.ID, &user.Nickname, &user.CreatedAt, &user.Avatar, &user.Cover, &user.Bio, &user.Exp); err != nil {
 			return nil, 0
 		}
 		out = append(out, user)
@@ -1645,7 +1749,7 @@ func (s *SQLiteStore) UserComments(userID string, offset, limit int) ([]Comment,
 	}
 
 	rows, err := s.db.Query(
-		`SELECT c.id, c.post_id, c.parent_id, c.author_id, c.content, c.content_json, c.tags, c.attachments, c.created_at
+		`SELECT c.id, c.post_id, c.parent_id, c.author_id, c.content, c.content_json, c.tags, c.attachments, c.floor, c.created_at
 		 FROM comments c
 		 JOIN posts p ON p.id = c.post_id
 		 WHERE c.author_id = ?
@@ -1676,6 +1780,7 @@ func (s *SQLiteStore) UserComments(userID string, offset, limit int) ([]Comment,
 			&contentJSON,
 			&tags,
 			&attachments,
+			&comment.Floor,
 			&comment.CreatedAt,
 		); err != nil {
 			return nil, 0
@@ -1725,11 +1830,11 @@ func (s *SQLiteStore) SearchPosts(keyword string, offset, limit int) ([]Post, in
 
 	// Get paginated results
 	rows, err := s.db.Query(
-		`SELECT id, board_id, author_id, title, content, content_json, tags, attachments, created_at
+		`SELECT id, board_id, author_id, title, content, content_json, tags, attachments, view_count, created_at
 		 FROM posts
 		 WHERE (title LIKE ? OR content LIKE ?)
 		   AND (deleted_at IS NULL OR TRIM(deleted_at) = '')
-		 ORDER BY seq DESC
+		 ORDER BY created_at DESC, seq DESC
 		 LIMIT ? OFFSET ?;`,
 		pattern, pattern, limit, offset,
 	)
@@ -1744,7 +1849,7 @@ func (s *SQLiteStore) SearchPosts(keyword string, offset, limit int) ([]Post, in
 		var contentJSON sql.NullString
 		var tags sql.NullString
 		var attachments sql.NullString
-		if err := rows.Scan(&p.ID, &p.BoardID, &p.AuthorID, &p.Title, &p.Content, &contentJSON, &tags, &attachments, &p.CreatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.BoardID, &p.AuthorID, &p.Title, &p.Content, &contentJSON, &tags, &attachments, &p.ViewCount, &p.CreatedAt); err != nil {
 			return nil, 0
 		}
 		p.ContentJSON = strings.TrimSpace(contentJSON.String)
@@ -1781,7 +1886,7 @@ func (s *SQLiteStore) SearchUsers(keyword string, offset, limit int) ([]User, in
 
 	// Get paginated results
 	rows, err := s.db.Query(
-		`SELECT id, nickname, created_at, avatar, cover, bio
+		`SELECT id, nickname, created_at, avatar, cover, bio, exp
 		 FROM users
 		 WHERE nickname LIKE ?
 		 ORDER BY created_at DESC
@@ -1796,7 +1901,7 @@ func (s *SQLiteStore) SearchUsers(keyword string, offset, limit int) ([]User, in
 	out := make([]User, 0, limit)
 	for rows.Next() {
 		var user User
-		if err := rows.Scan(&user.ID, &user.Nickname, &user.CreatedAt, &user.Avatar, &user.Cover, &user.Bio); err != nil {
+		if err := rows.Scan(&user.ID, &user.Nickname, &user.CreatedAt, &user.Avatar, &user.Cover, &user.Bio, &user.Exp); err != nil {
 			return nil, 0
 		}
 		out = append(out, user)

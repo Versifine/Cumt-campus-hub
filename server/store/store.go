@@ -14,6 +14,7 @@ type User struct {
 	Avatar    string
 	Cover     string
 	Bio       string
+	Exp       int
 	CreatedAt string
 }
 
@@ -28,6 +29,7 @@ type API interface {
 	UserByToken(token string) (User, bool)
 	GetUser(userID string) (User, bool)
 	UpdateUser(userID, nickname, bio, avatar, cover string) (User, error)
+	AddUserExp(userID string, delta int) error
 
 	FollowUser(followerID, followeeID string) error
 	UnfollowUser(followerID, followeeID string) error
@@ -42,6 +44,7 @@ type API interface {
 
 	Posts(boardID string) []Post
 	GetPost(postID string) (Post, bool)
+	IncrementPostViewCount(postID string) error
 	CreatePost(boardID, authorID, title, content, contentJSON string, tags, attachments []string) Post
 	SoftDeletePost(postID, actorUserID string, isAdmin bool) error
 
@@ -99,6 +102,7 @@ type Post struct {
 	ContentJSON string
 	Tags        []string
 	Attachments []string
+	ViewCount   int
 	CreatedAt   string
 	DeletedAt   string
 }
@@ -113,6 +117,7 @@ type Comment struct {
 	ContentJSON string
 	Tags        []string
 	Attachments []string
+	Floor       int
 	CreatedAt   string
 	DeletedAt   string
 }
@@ -263,6 +268,22 @@ func (s *Store) UpdateUser(userID, nickname, bio, avatar, cover string) (User, e
 
 	s.users[userID] = user
 	return user, nil
+}
+
+func (s *Store) AddUserExp(userID string, delta int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	user, ok := s.users[userID]
+	if !ok {
+		return ErrNotFound
+	}
+	user.Exp += delta
+	if user.Exp < 0 {
+		user.Exp = 0
+	}
+	s.users[userID] = user
+	return nil
 }
 
 func (s *Store) FollowUser(followerID, followeeID string) error {
@@ -441,24 +462,20 @@ func (s *Store) Posts(boardID string) []Post {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if boardID == "" {
-		out := make([]Post, 0, len(s.posts))
-		for i := len(s.posts) - 1; i >= 0; i-- {
-			post := s.posts[i]
-			if post.DeletedAt == "" {
-				out = append(out, post)
-			}
+	filtered := make([]Post, 0, len(s.posts))
+	for _, post := range s.posts {
+		if post.DeletedAt != "" {
+			continue
 		}
-		return out
+		if boardID != "" && post.BoardID != boardID {
+			continue
+		}
+		filtered = append(filtered, post)
 	}
 
-	filtered := make([]Post, 0, len(s.posts))
-	for i := len(s.posts) - 1; i >= 0; i-- {
-		post := s.posts[i]
-		if post.BoardID == boardID && post.DeletedAt == "" {
-			filtered = append(filtered, post)
-		}
-	}
+	sort.SliceStable(filtered, func(i, j int) bool {
+		return filtered[i].CreatedAt > filtered[j].CreatedAt
+	})
 	return filtered
 }
 
@@ -473,6 +490,20 @@ func (s *Store) GetPost(postID string) (Post, bool) {
 		}
 	}
 	return Post{}, false
+}
+
+func (s *Store) IncrementPostViewCount(postID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for idx, post := range s.posts {
+		if post.ID == postID && post.DeletedAt == "" {
+			post.ViewCount++
+			s.posts[idx] = post
+			return nil
+		}
+	}
+	return ErrNotFound
 }
 
 // CreatePost appends a post to the store and returns it.
@@ -494,6 +525,7 @@ func (s *Store) CreatePost(boardID, authorID, title, content, contentJSON string
 		ContentJSON: contentJSON,
 		Tags:        storedTags,
 		Attachments: storedAttachments,
+		ViewCount:   0,
 		CreatedAt:   now(),
 	}
 	s.posts = append(s.posts, post)
@@ -555,6 +587,18 @@ func (s *Store) CreateComment(postID, authorID, content, contentJSON, parentID s
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	trimmedParent := strings.TrimSpace(parentID)
+	newFloor := 0
+	if trimmedParent == "" {
+		maxFloor := 0
+		for _, comment := range s.comments {
+			if comment.PostID == postID && comment.ParentID == "" && comment.Floor > maxFloor {
+				maxFloor = comment.Floor
+			}
+		}
+		newFloor = maxFloor + 1
+	}
+
 	s.nextComment++
 	storedAttachments := make([]string, len(attachments))
 	copy(storedAttachments, attachments)
@@ -563,12 +607,13 @@ func (s *Store) CreateComment(postID, authorID, content, contentJSON, parentID s
 	comment := Comment{
 		ID:          fmt.Sprintf("c_%d", s.nextComment),
 		PostID:      postID,
-		ParentID:    parentID,
+		ParentID:    trimmedParent,
 		AuthorID:    authorID,
 		Content:     content,
 		ContentJSON: contentJSON,
 		Tags:        storedTags,
 		Attachments: storedAttachments,
+		Floor:       newFloor,
 		CreatedAt:   now(),
 	}
 	s.comments = append(s.comments, comment)

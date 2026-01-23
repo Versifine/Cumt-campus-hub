@@ -2,9 +2,12 @@ package community
 
 import (
 	"encoding/json"
+	"log"
+	"math"
 	"net/http"
 	"net/netip"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -26,6 +29,32 @@ var (
 	commentLimiter = ratelimit.NewFixedWindow(30*time.Second, 10)
 )
 
+const (
+	postSortLatest = "latest"
+	postSortHot    = "hot"
+)
+
+func normalizePostSort(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == postSortHot {
+		return postSortHot
+	}
+	return postSortLatest
+}
+
+func hotScore(score int, commentCount int, createdAt string) float64 {
+	createdTime, err := time.Parse(time.RFC3339, createdAt)
+	if err != nil {
+		return float64(score + commentCount*2)
+	}
+	ageHours := time.Since(createdTime).Hours()
+	if ageHours < 0 {
+		ageHours = 0
+	}
+	weighted := float64(score + commentCount*2)
+	return weighted / math.Pow(ageHours+2, 1.5)
+}
+
 // GetBoards handles GET /api/v1/boards.
 func (h *Handler) GetBoards(c *gin.Context) {
 	c.JSON(http.StatusOK, h.Store.Boards())
@@ -35,6 +64,7 @@ func (h *Handler) GetBoards(c *gin.Context) {
 func (h *Handler) ListPosts(c *gin.Context) {
 	boardID := c.Query("board_id")
 	authorID := c.Query("author_id")
+	sortBy := normalizePostSort(c.Query("sort"))
 	page := parsePositiveInt(c.Query("page"), 1)
 	pageSize := parsePositiveInt(c.Query("page_size"), 20)
 
@@ -49,6 +79,37 @@ func (h *Handler) ListPosts(c *gin.Context) {
 		}
 		posts = filtered
 	}
+
+	postMeta := make(map[string]struct {
+		score        int
+		commentCount int
+		hotScore     float64
+	}, len(posts))
+	for _, post := range posts {
+		score := h.Store.PostScore(post.ID)
+		commentCount := h.Store.CommentCount(post.ID)
+		postMeta[post.ID] = struct {
+			score        int
+			commentCount int
+			hotScore     float64
+		}{
+			score:        score,
+			commentCount: commentCount,
+			hotScore:     hotScore(score, commentCount, post.CreatedAt),
+		}
+	}
+
+	sort.SliceStable(posts, func(i, j int) bool {
+		if sortBy == postSortHot {
+			left := postMeta[posts[i].ID].hotScore
+			right := postMeta[posts[j].ID].hotScore
+			if left == right {
+				return posts[i].CreatedAt > posts[j].CreatedAt
+			}
+			return left > right
+		}
+		return posts[i].CreatedAt > posts[j].CreatedAt
+	})
 	total := len(posts)
 
 	start := (page - 1) * pageSize
@@ -71,12 +132,13 @@ func (h *Handler) ListPosts(c *gin.Context) {
 				Name: board.Name,
 			}
 		}
-		score := h.Store.PostScore(post.ID)
+		meta := postMeta[post.ID]
+		score := meta.score
 		myVote := 0
 		if viewerID != "" {
 			myVote = h.Store.PostVote(post.ID, viewerID)
 		}
-		commentCount := h.Store.CommentCount(post.ID)
+		commentCount := meta.commentCount
 
 		items = append(items, postItem{
 			ID:           post.ID,
@@ -88,13 +150,9 @@ func (h *Handler) ListPosts(c *gin.Context) {
 			Score:        score,
 			CommentCount: commentCount,
 			MyVote:       myVote,
-			Author: userSummary{
-				ID:       author.ID,
-				Nickname: author.Nickname,
-				Avatar:   author.Avatar,
-			},
-			Board:     boardInfo,
-			CreatedAt: post.CreatedAt,
+			Author:       userSummaryFromUser(author),
+			Board:        boardInfo,
+			CreatedAt:    post.CreatedAt,
 		})
 	}
 
@@ -160,6 +218,9 @@ func (h *Handler) CreatePost(c *gin.Context) {
 	}
 	tags := normalizeTags(req.Tags, maxPostTags)
 	post := h.Store.CreatePost(req.BoardID, user.ID, req.Title, req.Content, contentJSON, tags, attachments)
+	if err := h.Store.AddUserExp(user.ID, 10); err != nil {
+		log.Printf("failed to add post exp for user %s: %v", user.ID, err)
+	}
 	resp := struct {
 		ID          string           `json:"id"`
 		BoardID     string           `json:"board_id"`
@@ -213,13 +274,10 @@ func (h *Handler) ListComments(c *gin.Context) {
 			myVote = h.Store.CommentVote(postID, comment.ID, viewerID)
 		}
 		items = append(items, commentItem{
-			ID:       comment.ID,
-			ParentID: parentID,
-			Author: userSummary{
-				ID:       author.ID,
-				Nickname: author.Nickname,
-				Avatar:   author.Avatar,
-			},
+			ID:          comment.ID,
+			ParentID:    parentID,
+			Author:      userSummaryFromUser(author),
+			Floor:       comment.Floor,
 			Content:     comment.Content,
 			ContentJSON: safeJSON(comment.ContentJSON),
 			Tags:        comment.Tags,
@@ -292,6 +350,9 @@ func (h *Handler) CreateComment(c *gin.Context) {
 
 	tags := normalizeTags(req.Tags, maxCommentTags)
 	comment := h.Store.CreateComment(postID, user.ID, req.Content, contentJSON, parentIDValue, tags, attachments)
+	if err := h.Store.AddUserExp(user.ID, 2); err != nil {
+		log.Printf("failed to add comment exp for user %s: %v", user.ID, err)
+	}
 
 	// Trigger notifications
 	h.triggerCommentNotifications(postID, comment, user.ID, parentIDValue)
@@ -306,6 +367,7 @@ func (h *Handler) CreateComment(c *gin.Context) {
 		PostID      string           `json:"post_id"`
 		ParentID    *string          `json:"parent_id"`
 		AuthorID    string           `json:"author_id"`
+		Floor       int              `json:"floor"`
 		Content     string           `json:"content"`
 		ContentJSON json.RawMessage  `json:"content_json,omitempty"`
 		Tags        []string         `json:"tags"`
@@ -318,6 +380,7 @@ func (h *Handler) CreateComment(c *gin.Context) {
 		PostID:      comment.PostID,
 		ParentID:    parentID,
 		AuthorID:    comment.AuthorID,
+		Floor:       comment.Floor,
 		Content:     comment.Content,
 		ContentJSON: safeJSON(comment.ContentJSON),
 		Tags:        comment.Tags,
@@ -346,12 +409,16 @@ func (h *Handler) GetPost(c *gin.Context) {
 
 	board, _ := h.Store.GetBoard(post.BoardID)
 	author, _ := h.Store.GetUser(post.AuthorID)
+	authorLevel := store.LevelForExp(author.Exp)
 	score := h.Store.PostScore(post.ID)
 	commentCount := h.Store.CommentCount(post.ID)
 	myVote := 0
 	if viewerID := h.viewerID(c); viewerID != "" {
 		myVote = h.Store.PostVote(post.ID, viewerID)
 	}
+	go func(postID string) {
+		_ = h.Store.IncrementPostViewCount(postID)
+	}(post.ID)
 
 	var deletedAt *string
 	if strings.TrimSpace(post.DeletedAt) != "" {
@@ -371,6 +438,7 @@ func (h *Handler) GetPost(c *gin.Context) {
 		Score        int              `json:"score"`
 		MyVote       int              `json:"my_vote"`
 		CommentCount int              `json:"comment_count"`
+		ViewCount    int              `json:"view_count"`
 		CreatedAt    string           `json:"created_at"`
 		DeletedAt    any              `json:"deleted_at"`
 	}{
@@ -380,9 +448,11 @@ func (h *Handler) GetPost(c *gin.Context) {
 			"name": board.Name,
 		},
 		Author: map[string]any{
-			"id":       author.ID,
-			"nickname": author.Nickname,
-			"avatar":   author.Avatar,
+			"id":          author.ID,
+			"nickname":    author.Nickname,
+			"avatar":      author.Avatar,
+			"level":       authorLevel.Level,
+			"level_title": authorLevel.Title,
 		},
 		Title:        post.Title,
 		Content:      post.Content,
@@ -392,6 +462,7 @@ func (h *Handler) GetPost(c *gin.Context) {
 		Score:        score,
 		MyVote:       myVote,
 		CommentCount: commentCount,
+		ViewCount:    post.ViewCount,
 		CreatedAt:    post.CreatedAt,
 		DeletedAt:    deletedAt,
 	}
@@ -722,6 +793,7 @@ type commentItem struct {
 	ID          string           `json:"id"`
 	ParentID    *string          `json:"parent_id"`
 	Author      userSummary      `json:"author"`
+	Floor       int              `json:"floor"`
 	Content     string           `json:"content"`
 	ContentJSON json.RawMessage  `json:"content_json,omitempty"`
 	Tags        []string         `json:"tags"`
@@ -732,9 +804,22 @@ type commentItem struct {
 }
 
 type userSummary struct {
-	ID       string `json:"id"`
-	Nickname string `json:"nickname"`
-	Avatar   string `json:"avatar"`
+	ID         string `json:"id"`
+	Nickname   string `json:"nickname"`
+	Avatar     string `json:"avatar"`
+	Level      int    `json:"level"`
+	LevelTitle string `json:"level_title"`
+}
+
+func userSummaryFromUser(user store.User) userSummary {
+	level := store.LevelForExp(user.Exp)
+	return userSummary{
+		ID:         user.ID,
+		Nickname:   user.Nickname,
+		Avatar:     user.Avatar,
+		Level:      level.Level,
+		LevelTitle: level.Title,
+	}
 }
 
 func normalizeAttachmentIDs(ids []string) []string {

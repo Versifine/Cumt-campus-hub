@@ -25,16 +25,18 @@ type SearchPostsResponse struct {
 
 // PostResult is a search result item for posts.
 type PostResult struct {
-	ID           string   `json:"id"`
-	BoardID      string   `json:"board_id"`
-	AuthorID     string   `json:"author_id"`
-	AuthorName   string   `json:"author_name"`
-	Title        string   `json:"title"`
-	Content      string   `json:"content"`
-	Tags         []string `json:"tags"`
-	CreatedAt    string   `json:"created_at"`
-	Score        int      `json:"score"`
-	CommentCount int      `json:"comment_count"`
+	ID               string   `json:"id"`
+	BoardID          string   `json:"board_id"`
+	AuthorID         string   `json:"author_id"`
+	AuthorName       string   `json:"author_name"`
+	AuthorLevel      int      `json:"author_level"`
+	AuthorLevelTitle string   `json:"author_level_title"`
+	Title            string   `json:"title"`
+	Content          string   `json:"content"`
+	Tags             []string `json:"tags"`
+	CreatedAt        string   `json:"created_at"`
+	Score            int      `json:"score"`
+	CommentCount     int      `json:"comment_count"`
 }
 
 // SearchUsersResponse is the response for user search.
@@ -47,11 +49,13 @@ type SearchUsersResponse struct {
 
 // UserResult is a search result item for users.
 type UserResult struct {
-	ID        string `json:"id"`
-	Nickname  string `json:"nickname"`
-	Avatar    string `json:"avatar"`
-	Bio       string `json:"bio"`
-	CreatedAt string `json:"created_at"`
+	ID         string `json:"id"`
+	Nickname   string `json:"nickname"`
+	Avatar     string `json:"avatar"`
+	Bio        string `json:"bio"`
+	CreatedAt  string `json:"created_at"`
+	Level      int    `json:"level"`
+	LevelTitle string `json:"level_title"`
 }
 
 // SearchPosts handles GET /api/v1/search/posts?q=xxx&page=1&page_size=20
@@ -82,8 +86,13 @@ func (h *Handler) SearchPosts(c *gin.Context) {
 	results := make([]PostResult, 0, len(posts))
 	for _, post := range posts {
 		authorName := ""
+		authorLevel := 0
+		authorLevelTitle := ""
 		if user, ok := h.Store.GetUser(post.AuthorID); ok {
 			authorName = user.Nickname
+			level := store.LevelForExp(user.Exp)
+			authorLevel = level.Level
+			authorLevelTitle = level.Title
 		}
 
 		// Truncate content for search results
@@ -93,16 +102,18 @@ func (h *Handler) SearchPosts(c *gin.Context) {
 		}
 
 		results = append(results, PostResult{
-			ID:           post.ID,
-			BoardID:      post.BoardID,
-			AuthorID:     post.AuthorID,
-			AuthorName:   authorName,
-			Title:        post.Title,
-			Content:      content,
-			Tags:         post.Tags,
-			CreatedAt:    post.CreatedAt,
-			Score:        h.Store.PostScore(post.ID),
-			CommentCount: h.Store.CommentCount(post.ID),
+			ID:               post.ID,
+			BoardID:          post.BoardID,
+			AuthorID:         post.AuthorID,
+			AuthorName:       authorName,
+			AuthorLevel:      authorLevel,
+			AuthorLevelTitle: authorLevelTitle,
+			Title:            post.Title,
+			Content:          content,
+			Tags:             post.Tags,
+			CreatedAt:        post.CreatedAt,
+			Score:            h.Store.PostScore(post.ID),
+			CommentCount:     h.Store.CommentCount(post.ID),
 		})
 	}
 
@@ -141,12 +152,15 @@ func (h *Handler) SearchUsers(c *gin.Context) {
 
 	results := make([]UserResult, 0, len(users))
 	for _, user := range users {
+		level := store.LevelForExp(user.Exp)
 		results = append(results, UserResult{
-			ID:        user.ID,
-			Nickname:  user.Nickname,
-			Avatar:    user.Avatar,
-			Bio:       user.Bio,
-			CreatedAt: user.CreatedAt,
+			ID:         user.ID,
+			Nickname:   user.Nickname,
+			Avatar:     user.Avatar,
+			Bio:        user.Bio,
+			CreatedAt:  user.CreatedAt,
+			Level:      level.Level,
+			LevelTitle: level.Title,
 		})
 	}
 

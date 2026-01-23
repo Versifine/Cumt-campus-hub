@@ -7,6 +7,9 @@ export type CurrentUser = {
   cover: string
   bio: string
   created_at: string
+  exp?: number
+  level?: number
+  level_title?: string
   posts_count?: number
   comments_count?: number
   followers_count?: number
@@ -42,6 +45,9 @@ export type PublicUser = {
   cover: string
   bio: string
   created_at: string
+  exp: number
+  level: number
+  level_title: string
   posts_count: number
   comments_count: number
   followers_count: number
@@ -55,6 +61,8 @@ export type FollowUserItem = {
   avatar: string
   bio: string
   created_at: string
+  level?: number
+  level_title?: string
 }
 
 export type FollowUserListResponse = {
@@ -70,6 +78,11 @@ export type UserCommentItem = {
   content: string
   content_json?: unknown
   created_at: string
+  floor?: number
+  post_title?: string
+  board_id?: string
+  board_name?: string
+  is_reply?: boolean
 }
 
 export type UserCommentListResponse = {
@@ -103,4 +116,3 @@ export const fetchUserComments = (userId: string, page = 1, pageSize = 20): Prom
   })
   return apiRequest<UserCommentListResponse>(`/users/${userId}/comments?${params.toString()}`)
 }
-

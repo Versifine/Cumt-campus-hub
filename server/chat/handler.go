@@ -129,10 +129,16 @@ func (h *Handler) handleSend(client *Client, msg envelope) {
 	}
 
 	chatMsg := h.Store.AddMessage(req.RoomID, client.User.ID, req.Content)
+	level := store.LevelForExp(client.User.Exp)
 	payload := map[string]any{
-		"id":         chatMsg.ID,
-		"roomId":     chatMsg.RoomID,
-		"sender":     map[string]any{"id": client.User.ID, "nickname": client.User.Nickname},
+		"id":     chatMsg.ID,
+		"roomId": chatMsg.RoomID,
+		"sender": map[string]any{
+			"id":          client.User.ID,
+			"nickname":    client.User.Nickname,
+			"level":       level.Level,
+			"level_title": level.Title,
+		},
 		"content":    chatMsg.Content,
 		"created_at": chatMsg.CreatedAt,
 	}

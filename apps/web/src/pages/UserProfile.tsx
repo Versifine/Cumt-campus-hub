@@ -11,6 +11,8 @@ import {
   Row, 
   Col, 
   Statistic,
+  Progress,
+  Tag,
   Empty,
   Typography,
   theme,
@@ -40,9 +42,10 @@ import { PostSkeletonList } from '../components/Skeletons'
 import { useAuth } from '../context/useAuth'
 import { useInfiniteScroll } from '../hooks/useInfiniteScroll'
 import { formatRelativeTimeUTC8 } from '../utils/time'
+import LevelBadge from '../components/LevelBadge'
 
 const { Content } = Layout
-const { Title, Paragraph } = Typography
+const { Title, Paragraph, Text } = Typography
 
 type LoadState<T> = {
   data: T
@@ -61,6 +64,64 @@ type ProfileData = {
   followingCount?: number | null
   commentsCount?: number | null
   isFollowing?: boolean
+  level?: number | null
+  levelTitle?: string | null
+  exp?: number | null
+}
+
+type ExpProgress = {
+  min: number
+  max: number
+  percent: number
+  remaining: number
+  nextLevel?: number
+  isMax: boolean
+}
+
+const getExpProgress = (exp?: number | null): ExpProgress => {
+  const value = Math.max(0, exp ?? 0)
+  if (value <= 50) {
+    const max = 50
+    return {
+      min: 0,
+      max,
+      percent: Math.round((value / max) * 100),
+      remaining: Math.max(0, max - value),
+      nextLevel: 2,
+      isMax: false,
+    }
+  }
+  if (value <= 200) {
+    const min = 51
+    const max = 200
+    return {
+      min,
+      max,
+      percent: Math.round(((value - min) / (max - min)) * 100),
+      remaining: Math.max(0, max - value),
+      nextLevel: 3,
+      isMax: false,
+    }
+  }
+  if (value < 1000) {
+    const min = 201
+    const max = 1000
+    return {
+      min,
+      max,
+      percent: Math.round(((value - min) / (max - min)) * 100),
+      remaining: Math.max(0, max - value),
+      nextLevel: 4,
+      isMax: false,
+    }
+  }
+  return {
+    min: 1000,
+    max: 1000,
+    percent: 100,
+    remaining: 0,
+    isMax: true,
+  }
 }
 
 const UserProfile = () => {
@@ -169,6 +230,9 @@ const UserProfile = () => {
           followersCount: me.followers_count ?? 0,
           followingCount: me.following_count ?? 0,
           commentsCount: me.comments_count ?? 0,
+          level: me.level ?? 1,
+          levelTitle: me.level_title ?? '萌新',
+          exp: me.exp ?? 0,
         }
       } else {
         const pubUser = await fetchUserProfile(id)
@@ -183,6 +247,9 @@ const UserProfile = () => {
           followingCount: pubUser.following_count,
           commentsCount: pubUser.comments_count,
           isFollowing: pubUser.is_following,
+          level: pubUser.level,
+          levelTitle: pubUser.level_title,
+          exp: pubUser.exp,
         }
       }
       setProfileState({ data: profileData, loading: false, error: null })
@@ -275,6 +342,9 @@ const UserProfile = () => {
     [commentsTotal, profileState.data?.commentsCount],
   )
 
+  const expValue = profileState.data?.exp ?? 0
+  const expProgress = getExpProgress(expValue)
+
 
   return (
     <Layout style={{ minHeight: '100vh', background: 'transparent' }}>
@@ -329,10 +399,33 @@ const UserProfile = () => {
                   </Space>
                 </div>
                 
-                <Title level={2} style={{ marginBottom: 4 }}>{profileState.data.nickname}</Title>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap', marginBottom: 4 }}>
+                  <Title level={2} style={{ marginBottom: 0 }}>{profileState.data.nickname}</Title>
+                  <LevelBadge
+                    level={profileState.data.level}
+                    title={profileState.data.levelTitle}
+                  />
+                </div>
                 <Paragraph type="secondary" style={{ maxWidth: 600 }}>
                   {profileState.data.bio || 'This user has not written a bio yet.'}
                 </Paragraph>
+
+                <div style={{ marginTop: 16 }}>
+                  <Space direction="vertical" size={6} style={{ width: '100%' }}>
+                    <Space size={8} wrap>
+                      <Text strong>经验</Text>
+                      <Text type="secondary">{expValue} EXP</Text>
+                      {expProgress.isMax ? (
+                        <Text type="secondary">已达最高等级</Text>
+                      ) : (
+                        <Text type="secondary">
+                          距离 Lv{expProgress.nextLevel} 还差 {expProgress.remaining} EXP
+                        </Text>
+                      )}
+                    </Space>
+                    <Progress percent={expProgress.percent} showInfo={false} strokeColor={token.colorPrimary} />
+                  </Space>
+                </div>
 
                 <Descriptions column={{ xs: 1, sm: 2, md: 3 }} style={{ marginTop: 24 }}>
                   <Descriptions.Item label="User ID">{profileState.data.id}</Descriptions.Item>
@@ -402,7 +495,12 @@ const UserProfile = () => {
                     <List.Item onClick={() => { closeFollowModal(); navigate(`/u/${item.id}`) }} style={{ cursor: 'pointer' }}>
                       <List.Item.Meta
                         avatar={<Avatar src={item.avatar} icon={<UserOutlined />} />}
-                        title={item.nickname}
+                        title={
+                          <Space size={6} wrap>
+                            <span>{item.nickname}</span>
+                            <LevelBadge level={item.level} title={item.level_title} compact />
+                          </Space>
+                        }
                         description={item.bio || '暂无简介'}
                       />
                     </List.Item>
@@ -474,22 +572,42 @@ const UserProfile = () => {
                         ) : (
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
                             {comments.map((comment) => (
-                              <Card key={comment.id} bordered style={{ borderRadius: 12 }}>
-                                <div style={{ marginBottom: 8 }}>
-                                  <Typography.Text type="secondary">在帖子</Typography.Text>
-                                  <Button 
-                                    type="link" 
-                                    onClick={() => navigate(`/post/${comment.post_id}`)}
-                                    style={{ padding: 0, marginLeft: 4 }}
-                                  >
-                                    {comment.post_id}
-                                  </Button>
+                              <Card
+                                key={comment.id}
+                                bordered
+                                hoverable
+                                onClick={() => navigate(`/post/${comment.post_id}?comment_id=${comment.id}`)}
+                                style={{ borderRadius: 12, cursor: 'pointer' }}
+                              >
+                                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, marginBottom: 8 }}>
+                                  <Space size={8} wrap>
+                                    {comment.board_name && (
+                                      <Tag color="geekblue" bordered={false} style={{ marginInlineStart: 0 }}>
+                                        {comment.board_name}
+                                      </Tag>
+                                    )}
+                                    <Typography.Text strong>
+                                      {comment.post_title || comment.post_id}
+                                    </Typography.Text>
+                                    {comment.floor ? (
+                                      <Tag color="blue" bordered={false} style={{ marginInlineStart: 0 }}>
+                                        #{comment.floor}楼
+                                      </Tag>
+                                    ) : comment.is_reply ? (
+                                      <Tag bordered={false} style={{ marginInlineStart: 0 }}>
+                                        回复
+                                      </Tag>
+                                    ) : null}
+                                  </Space>
+                                  <Typography.Text type="secondary" style={{ fontSize: '0.8rem' }}>
+                                    {formatRelativeTimeUTC8(comment.created_at)}
+                                  </Typography.Text>
                                 </div>
-                                <Typography.Paragraph style={{ marginBottom: 0 }}>
+                                <Typography.Paragraph style={{ marginBottom: 8 }} ellipsis={{ rows: 2 }}>
                                   {comment.content || '...'}
                                 </Typography.Paragraph>
-                                <Typography.Text type="secondary" style={{ fontSize: '0.8rem' }}>
-                                  {formatRelativeTimeUTC8(comment.created_at)}
+                                <Typography.Text type="secondary" style={{ fontSize: '0.75rem' }}>
+                                  点击卡片跳转到对应楼层
                                 </Typography.Text>
                               </Card>
                             ))}

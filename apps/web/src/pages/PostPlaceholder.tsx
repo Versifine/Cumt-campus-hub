@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { 
   Layout, 
   Card, 
@@ -13,7 +13,8 @@ import {
   Dropdown,
   Popconfirm,
   theme,
-  Alert
+  Alert,
+  Radio
 } from 'antd'
 import { useQuery } from '@tanstack/react-query'
 import { 
@@ -25,7 +26,8 @@ import {
   MoreOutlined,
   UserOutlined,
   MessageOutlined,
-  WarningOutlined
+  WarningOutlined,
+  EyeOutlined
 } from '@ant-design/icons'
 import { getErrorMessage } from '../api/client'
 import { uploadInlineImage } from '../api/uploads'
@@ -51,6 +53,7 @@ import { useInfiniteScroll } from '../hooks/useInfiniteScroll'
 import { extractMediaFromContent, normalizeMediaFromAttachments } from '../utils/media'
 import { clearDraft, loadDraft, saveDraft } from '../utils/drafts'
 import { formatRelativeTimeUTC8 } from '../utils/time'
+import LevelBadge from '../components/LevelBadge'
 
 const { Content } = Layout
 const { Title, Text } = Typography
@@ -69,7 +72,9 @@ type ThreadedComment = CommentItem & {
   children: ThreadedComment[]
 }
 
-const buildCommentTree = (comments: CommentItem[]) => {
+type CommentSortOrder = 'asc' | 'desc'
+
+const buildCommentTree = (comments: CommentItem[], sortOrder: CommentSortOrder) => {
   const map = new Map<string, ThreadedComment>()
   const roots: ThreadedComment[] = []
 
@@ -95,8 +100,9 @@ const buildCommentTree = (comments: CommentItem[]) => {
   const sortDesc = (a: ThreadedComment, b: ThreadedComment) =>
     new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
 
+  const rootSort = sortOrder === 'asc' ? sortAsc : sortDesc
   const sortRecursive = (nodes: ThreadedComment[], depth = 0) => {
-    nodes.sort(depth === 0 ? sortDesc : sortAsc)
+    nodes.sort(depth === 0 ? rootSort : sortAsc)
     nodes.forEach(n => sortRecursive(n.children, depth + 1))
   }
 
@@ -223,6 +229,7 @@ const CommentForm = ({ onSubmit, onCancel, draftId, autoFocus, placeholder, subm
 const PostPlaceholder = () => {
   const { id } = useParams()
   const navigate = useNavigate()
+  const location = useLocation()
   const { user } = useAuth()
   const { token } = theme.useToken()
 
@@ -243,9 +250,21 @@ const PostPlaceholder = () => {
   })
   const comments = useMemo(() => commentsData ?? [], [commentsData])
   const commentsErrorMessage = commentsError ? getErrorMessage(commentsError) : null
+
+  const commentTargetId = useMemo(() => {
+    const params = new URLSearchParams(location.search)
+    const fromQuery = params.get('comment_id')
+    if (fromQuery) return fromQuery
+    if (location.hash.startsWith('#comment-')) {
+      return location.hash.replace('#comment-', '')
+    }
+    return ''
+  }, [location.hash, location.search])
   
   // Active reply target ID (null means no active reply)
   const [activeReplyId, setActiveReplyId] = useState<string | null>(null)
+  const [highlightCommentId, setHighlightCommentId] = useState<string | null>(null)
+  const [commentSortOrder, setCommentSortOrder] = useState<CommentSortOrder>('asc')
 
   const [postVote, setPostVote] = useState(0)
   const [postScore, setPostScore] = useState(0)
@@ -283,12 +302,40 @@ const PostPlaceholder = () => {
     setVisibleRootCount(commentBatchSize)
   }, [comments])
 
-  const threadedComments = useMemo(() => buildCommentTree(comments), [comments])
+  useEffect(() => {
+    if (!commentTargetId) {
+      setVisibleRootCount(commentBatchSize)
+    }
+  }, [commentSortOrder, commentTargetId])
+
+  const threadedComments = useMemo(
+    () => buildCommentTree(comments, commentSortOrder),
+    [comments, commentSortOrder],
+  )
   const visibleComments = useMemo(
     () => threadedComments.slice(0, visibleRootCount),
     [threadedComments, visibleRootCount],
   )
   const hasMoreComments = threadedComments.length > visibleRootCount
+
+  useEffect(() => {
+    if (!commentTargetId || comments.length === 0) return
+    setVisibleRootCount(threadedComments.length)
+    const timer = window.setTimeout(() => {
+      const target = document.getElementById(`comment-${commentTargetId}`)
+      if (target) {
+        target.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        setHighlightCommentId(commentTargetId)
+      }
+    }, 50)
+    return () => window.clearTimeout(timer)
+  }, [commentTargetId, comments.length, threadedComments.length])
+
+  useEffect(() => {
+    if (!highlightCommentId) return
+    const timer = window.setTimeout(() => setHighlightCommentId(null), 2000)
+    return () => window.clearTimeout(timer)
+  }, [highlightCommentId])
 
   const handleLoadMoreComments = useCallback(() => {
     if (!hasMoreComments) return
@@ -426,9 +473,21 @@ const PostPlaceholder = () => {
     const isOP = state.data && item.author.id === state.data.author.id
     const hasChildren = item.children.length > 0
     const isReplying = activeReplyId === item.id
+    const isHighlighted = highlightCommentId === item.id
 
     return (
-      <div key={item.id} style={{ marginTop: 16 }}>
+      <div
+        key={item.id}
+        id={`comment-${item.id}`}
+        style={{
+          marginTop: 16,
+          scrollMarginTop: 120,
+          padding: isHighlighted ? '8px 12px' : undefined,
+          borderRadius: 8,
+          backgroundColor: isHighlighted ? token.colorPrimaryBg : 'transparent',
+          transition: 'background-color 0.3s ease',
+        }}
+      >
         <div style={{ display: 'flex', gap: 12 }}>
           {/* Left Column: Avatar & Thread Line */}
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
@@ -459,8 +518,12 @@ const PostPlaceholder = () => {
             {/* Meta Header */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
               <Text strong style={{ fontSize: '0.9rem' }}>{item.author.nickname}</Text>
+              <LevelBadge level={item.author.level} title={item.author.level_title} compact />
               {isOP && <Tag color="blue" bordered={false} style={{ margin: 0, fontSize: '0.75rem', lineHeight: '18px' }}>OP</Tag>}
-              <Text type="secondary" style={{ fontSize: '0.8rem' }}>· {formatRelativeTimeUTC8(item.created_at)}</Text>
+              <Text type="secondary" style={{ fontSize: '0.8rem' }}>
+                · {formatRelativeTimeUTC8(item.created_at)}
+                {item.floor ? ` · #${item.floor}楼` : ''}
+              </Text>
             </div>
 
             {/* Content Body */}
@@ -592,10 +655,15 @@ const PostPlaceholder = () => {
                
                 <Space style={{ marginTop: 12 }}>
                   <Avatar src={state.data.author.avatar_url ?? (state.data.author as any).avatar} icon={<UserOutlined />} />
-                 <Text strong>{state.data.author.nickname}</Text>
-                 <Text type="secondary">· {formatRelativeTimeUTC8(state.data.created_at)}</Text>
-                 <Tag>{state.data.board?.name}</Tag>
-               </Space>
+                  <Text strong>{state.data.author.nickname}</Text>
+                  <LevelBadge level={state.data.author.level} title={state.data.author.level_title} compact />
+                  <Text type="secondary">· {formatRelativeTimeUTC8(state.data.created_at)}</Text>
+                  <Text type="secondary">
+                    <EyeOutlined style={{ marginRight: 4 }} />
+                    {state.data.view_count ?? 0} 浏览
+                  </Text>
+                  <Tag>{state.data.board?.name}</Tag>
+                </Space>
             </div>
 
             {/* Content */}
@@ -649,7 +717,21 @@ const PostPlaceholder = () => {
             {/* Comments Section */}
             <div style={{ marginTop: 40 }}>
               <div style={{ marginBottom: 24 }}>
-                <Title level={5}>评论 ({comments.length})</Title>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <Title level={5} style={{ margin: 0 }}>评论 ({comments.length})</Title>
+                  <Space size={8} wrap>
+                    <Text type="secondary" style={{ fontSize: '0.8rem' }}>排序</Text>
+                    <Radio.Group
+                      size="small"
+                      buttonStyle="solid"
+                      value={commentSortOrder}
+                      onChange={(e) => setCommentSortOrder(e.target.value as CommentSortOrder)}
+                    >
+                      <Radio.Button value="asc">正序</Radio.Button>
+                      <Radio.Button value="desc">逆序</Radio.Button>
+                    </Radio.Group>
+                  </Space>
+                </div>
                 {/* Main Comment Form */}
                 <div style={{ marginTop: 16 }}>
                   <CommentForm

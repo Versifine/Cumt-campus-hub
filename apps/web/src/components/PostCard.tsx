@@ -32,6 +32,7 @@ import { getErrorMessage } from '../api/client'
 import { useAuth } from '../context/useAuth'
 import { formatRelativeTimeUTC8 } from '../utils/time'
 import { extractMediaFromContent, type MediaItem } from '../utils/media'
+import LevelBadge from './LevelBadge'
 import ReportModal from './ReportModal'
 
 const { Text, Title, Paragraph } = Typography
@@ -80,6 +81,8 @@ const PostCard = ({ post }: PostCardProps) => {
   const boardName = getBoardName(post)
   const authorAvatar = (post.author as any).avatar_url ?? (post.author as any).avatar ?? null
   const commentCount = (post as any).comment_count ?? (post as any).comments ?? 0
+  const authorLevel = (post.author as any).level ?? (post as any).author_level
+  const authorLevelTitle = (post.author as any).level_title ?? (post as any).author_level_title
   
   const content = post.content?.trim()
   const inlineMedia = extractMediaFromContent(post.content_json)
@@ -166,19 +169,22 @@ const PostCard = ({ post }: PostCardProps) => {
       {/* Header: Author & Meta */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
         <Space align="center" size={12} onClick={(e) => { e.stopPropagation(); navigate(`/u/${post.author.id}`) }} style={{ cursor: 'pointer' }}>
-          <Avatar 
-            src={authorAvatar} 
-            icon={<UserOutlined />} 
-            style={{ backgroundColor: token.colorPrimary }}
-          >
-            {post.author.nickname?.[0]?.toUpperCase()}
-          </Avatar>
-          <div style={{ lineHeight: 1.2 }}>
-            <Text strong style={{ display: 'block' }}>{post.author.nickname}</Text>
-            <Text type="secondary" style={{ fontSize: '0.8rem' }}>
-              {timeLabel} · {boardName && <Tag bordered={false} style={{ marginLeft: 4 }}>{boardName}</Tag>}
-            </Text>
-          </div>
+            <Avatar 
+              src={authorAvatar} 
+              icon={<UserOutlined />} 
+              style={{ backgroundColor: token.colorPrimary }}
+            >
+              {post.author.nickname?.[0]?.toUpperCase()}
+            </Avatar>
+            <div style={{ lineHeight: 1.2 }}>
+              <Space size={6} wrap>
+                <Text strong>{post.author.nickname}</Text>
+                <LevelBadge level={authorLevel} title={authorLevelTitle} compact />
+              </Space>
+              <Text type="secondary" style={{ fontSize: '0.8rem' }}>
+                {timeLabel} · {boardName && <Tag bordered={false} style={{ marginLeft: 4 }}>{boardName}</Tag>}
+              </Text>
+            </div>
         </Space>
         
         {user && post.author.id !== user.id && (
