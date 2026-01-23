@@ -264,7 +264,7 @@ const Login = () => {
           <Button
             type="link"
             block
-            onClick={handleResend}
+            onClick={() => handleResend(registeredEmail)}
             loading={resendLoading}
             disabled={resendCooldown > 0}
             style={{ padding: 0, marginTop: 8 }}
