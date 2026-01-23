@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Layout, Row, Col, Typography, Button, Tag, Space } from 'antd'
+import { Layout, Row, Col, Typography, Button, Tag, Space, Radio } from 'antd'
 import { useInfiniteQuery } from '@tanstack/react-query'
 import { getErrorMessage } from '../api/client'
 import { fetchPosts } from '../api/posts'
@@ -17,6 +17,7 @@ const { Text } = Typography
 
 const Home = () => {
   const [activeBoardId, setActiveBoardId] = useState<string | null>(null)
+  const [sortBy, setSortBy] = useState<'latest' | 'hot'>('latest')
 
   const {
     data: boards = [],
@@ -35,10 +36,10 @@ const Home = () => {
     isFetchingNextPage,
     refetch: refetchPosts,
   } = useInfiniteQuery({
-    queryKey: ['posts', activeBoardId],
+    queryKey: ['posts', activeBoardId, sortBy],
     initialPageParam: 1,
     queryFn: ({ pageParam }) =>
-      fetchPosts(pageParam, postsPageSize, activeBoardId ?? undefined),
+      fetchPosts(pageParam, postsPageSize, activeBoardId ?? undefined, undefined, sortBy),
     getNextPageParam: (lastPage, allPages) => {
       const loaded = allPages.reduce((sum, page) => sum + page.items.length, 0)
       return loaded >= lastPage.total ? undefined : allPages.length + 1
@@ -91,6 +92,15 @@ const Home = () => {
           </Button>
         )}
       </Space>
+      <Radio.Group
+        value={sortBy}
+        onChange={(e) => setSortBy(e.target.value as 'latest' | 'hot')}
+        buttonStyle="solid"
+        size="small"
+      >
+        <Radio.Button value="latest">最新</Radio.Button>
+        <Radio.Button value="hot">热门</Radio.Button>
+      </Radio.Group>
     </div>
   )
 
@@ -130,7 +140,13 @@ const Home = () => {
           {/* Main Feed */}
           <Col xs={24} md={18} lg={13}>
             <SectionCard 
-              title={activeBoard ? 'Board Posts' : 'Latest Posts'}
+              title={
+                sortBy === 'hot'
+                  ? 'Hot Posts'
+                  : activeBoard
+                    ? 'Board Posts'
+                    : 'Latest Posts'
+              }
               actions={renderFeedHeader()}
             >
               {postsLoading ? (
