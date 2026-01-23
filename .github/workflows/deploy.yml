@@ -33,6 +33,12 @@ jobs:
     - name: Build Binary
       run: |
         GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o server_linux ./server
+        gzip -f server_linux
+
+    - name: Package Frontend
+      run: |
+        cd apps/web/dist
+        tar -czf ../../../frontend.tar.gz .
 
     # 4. 传送文件 (前后端分开传)
     - name: Create directories on server
@@ -53,9 +59,8 @@ jobs:
         host: ${{ secrets.SERVER_HOST }}
         username: ${{ secrets.SERVER_USER }}
         key: ${{ secrets.SSH_PRIVATE_KEY }}
-        source: "apps/web/dist/*"
-        target: "/var/www/cumt-hub/dist/"
-        strip_components: 3
+        source: "frontend.tar.gz"
+        target: "/root/cumt-hub/"
         timeout: 120s
         debug: true
         use_insecure_cipher: true
@@ -66,22 +71,31 @@ jobs:
         host: ${{ secrets.SERVER_HOST }}
         username: ${{ secrets.SERVER_USER }}
         key: ${{ secrets.SSH_PRIVATE_KEY }}
-        source: "server_linux"
+        source: "server_linux.gz"
         target: "/root/cumt-hub/"
         timeout: 120s
         debug: true
         use_insecure_cipher: true
 
-    # 5. 重启后端服务 (前端文件覆盖即生效)
+    # 5. 解压并重启服务
     - name: Restart Backend
       uses: appleboy/ssh-action@master
       with:
         host: ${{ secrets.SERVER_HOST }}
         username: ${{ secrets.SERVER_USER }}
         key: ${{ secrets.SSH_PRIVATE_KEY }}
+        use_insecure_cipher: true
         script: |
-          chmod +x /root/cumt-hub/server_linux
-          systemctl restart cumt-hub
-          # 给前端文件夹设置权限，防止 403 Forbidden
+          cd /root/cumt-hub/
+          # 解压后端
+          gzip -df server_linux.gz
+          chmod +x server_linux
+          # 解压前端
+          rm -rf /var/www/cumt-hub/dist/*
+          tar -xzf frontend.tar.gz -C /var/www/cumt-hub/dist/
+          rm frontend.tar.gz
+          # 设置权限
           chmod -R 755 /var/www/cumt-hub
+          # 重启服务
+          systemctl restart cumt-hub
           echo "Deployment Success!"
