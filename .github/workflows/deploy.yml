@@ -16,19 +16,13 @@ jobs:
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
-        node-version: '18'
+        node-version: '20'
     
     - name: Build Frontend
       run: |
         cd apps/web
         npm install
         npm run build
-    
-    - name: Move dist to root
-      run: |
-        # 把 dist 移到 Go embed 能找到的地方
-        rm -rf dist
-        mv apps/web/dist .
         
     # 3. 编译后端 Go
     - name: Setup Go
@@ -40,18 +34,28 @@ jobs:
       run: |
         GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o server_linux ./server
 
-    # 4. 传送到服务器 (只传二进制文件，不传数据库！)
-    - name: Copy file via SCP
+    # 4. 传送文件 (前后端分开传)
+    - name: Deploy Frontend
+      uses: appleboy/scp-action@master
+      with:
+        host: ${{ secrets.SERVER_HOST }}
+        username: ${{ secrets.SERVER_USER }}
+        key: ${{ secrets.SSH_PRIVATE_KEY }}
+        source: "apps/web/dist/*"
+        target: "/var/www/cumt-hub/dist/"
+        strip_components: 3
+
+    - name: Deploy Backend
       uses: appleboy/scp-action@master
       with:
         host: ${{ secrets.SERVER_HOST }}
         username: ${{ secrets.SERVER_USER }}
         key: ${{ secrets.SSH_PRIVATE_KEY }}
         source: "server_linux"
-        target: "/root/cumt-hub/"  # ⚠️ 改成你服务器上的部署目录
+        target: "/root/cumt-hub/"
 
-    # 5. 重启服务
-    - name: Restart Server
+    # 5. 重启后端服务 (前端文件覆盖即生效)
+    - name: Restart Backend
       uses: appleboy/ssh-action@master
       with:
         host: ${{ secrets.SERVER_HOST }}
@@ -60,4 +64,6 @@ jobs:
         script: |
           chmod +x /root/cumt-hub/server_linux
           systemctl restart cumt-hub
+          # 给前端文件夹设置权限，防止 403 Forbidden
+          chmod -R 755 /var/www/cumt-hub
           echo "Deployment Success!"
