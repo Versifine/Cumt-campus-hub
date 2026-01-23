@@ -10,6 +10,20 @@
 - 认证方式：Bearer Token
 - 错误响应统一为 `{ "code": 2001, "message": "invalid json" }`
 
+### 3.4 重发验证邮件
+
+`POST /api/v1/auth/resend-verification`
+
+请求：
+```json
+{ "account": "string" }
+```
+
+响应：
+```json
+{ "message": "verification email sent" }
+```
+
 ---
 
 ## 2. Health
@@ -30,6 +44,40 @@
 
 请求：
 ```json
+{
+  "account": "string",
+  "password": "string",
+  "confirm_password": "string",
+  "nickname": "string"
+}
+```
+
+说明：`account` 必须是邮箱地址；注册后会发送验证邮件。
+
+响应：
+```json
+{
+  "message": "verification email sent"
+}
+```
+
+说明：验证通过后才可登录获取 token。
+
+### 3.2 邮箱验证
+
+`GET /api/v1/auth/verify-email?token=...`
+
+响应：
+```json
+{ "message": "email verified" }
+```
+
+### 3.3 登录
+
+`POST /api/v1/auth/login`
+
+请求：
+```json
 { "account": "string", "password": "string" }
 ```
 
@@ -46,16 +94,6 @@
   }
 }
 ```
-
-说明：服务重启后 token 会失效。
-
-### 3.2 登录
-
-`POST /api/v1/auth/login`
-
-请求：同注册
-
-响应：同注册
 
 ---
 
@@ -93,7 +131,16 @@
 { "nickname": "alice", "bio": "", "avatar": "", "cover": "" }
 ```
 
-### 4.3 获取公开资料
+### 4.3 注销当前用户
+
+`DELETE /api/v1/users/me`
+
+响应：
+```json
+{ "message": "account deactivated" }
+```
+
+### 4.4 获取公开资料
 
 `GET /api/v1/users/{id}`
 
@@ -117,12 +164,12 @@
 }
 ```
 
-### 4.4 关注/取消关注
+### 4.5 关注/取消关注
 
 - `POST /api/v1/users/{id}/follow`
 - `DELETE /api/v1/users/{id}/follow`
 
-### 4.5 关注列表
+### 4.6 关注列表
 
 `GET /api/v1/users/{id}/following`
 
@@ -144,13 +191,13 @@
 }
 ```
 
-### 4.6 粉丝列表
+### 4.7 粉丝列表
 
 `GET /api/v1/users/{id}/followers`
 
 响应：同上
 
-### 4.7 用户评论列表
+### 4.8 用户评论列表
 
 `GET /api/v1/users/{id}/comments`
 

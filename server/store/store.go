@@ -18,14 +18,22 @@ type User struct {
 	CreatedAt string
 }
 
+type RegisterResult struct {
+	User              User
+	VerificationToken string
+}
+
 // API defines the data operations the handlers need.
 //
 // The default implementation in this repo is an in-memory store (*Store).
 // Database-backed implementations can satisfy this interface to swap storage
 // without changing handler logic.
 type API interface {
-	Register(account, password string) (string, User, error)
+	Register(account, password, nickname string) (RegisterResult, error)
 	Login(account, password string) (string, User, error)
+	VerifyEmail(token string) error
+	ResendVerification(account string) (string, error)
+	DeactivateAccount(userID string) error
 	UserByToken(token string) (User, bool)
 	GetUser(userID string) (User, bool)
 	UpdateUser(userID, nickname, bio, avatar, cover string) (User, error)
@@ -172,47 +180,55 @@ type Notification struct {
 
 // Store is an in-memory, mutex-protected demo data store.
 type Store struct {
-	mu            sync.Mutex
-	users         map[string]User
-	accounts      map[string]string
-	passwords     map[string]string
-	tokens        map[string]string
-	userTokens    map[string]string
-	boards        []Board
-	posts         []Post
-	comments      []Comment
-	postVotes     map[string]map[string]int
-	commentVotes  map[string]map[string]int
-	files         map[string]FileMeta
-	messages      map[string][]ChatMessage
-	reports       []Report
-	follows       map[string]map[string]bool // map[followerID]map[followeeID]bool
-	notifications []Notification
-	nextUserID    int
-	nextPostID    int
-	nextComment   int
-	nextFileID    int
-	nextMsgID     int
-	nextReport    int
-	nextNotifID   int
+	mu                  sync.Mutex
+	users               map[string]User
+	accounts            map[string]string
+	passwords           map[string]string
+	accountVerification map[string]AccountVerification
+	tokens              map[string]string
+	userTokens          map[string]string
+	boards              []Board
+	posts               []Post
+	comments            []Comment
+	postVotes           map[string]map[string]int
+	commentVotes        map[string]map[string]int
+	files               map[string]FileMeta
+	messages            map[string][]ChatMessage
+	reports             []Report
+	follows             map[string]map[string]bool // map[followerID]map[followeeID]bool
+	notifications       []Notification
+	nextUserID          int
+	nextPostID          int
+	nextComment         int
+	nextFileID          int
+	nextMsgID           int
+	nextReport          int
+	nextNotifID         int
+}
+
+type AccountVerification struct {
+	VerifiedAt string
+	TokenHash  string
+	ExpiresAt  time.Time
 }
 
 // NewStore creates a demo store with a few built-in boards.
 func NewStore() *Store {
 	return &Store{
-		users:        map[string]User{},
-		accounts:     map[string]string{},
-		passwords:    map[string]string{},
-		tokens:       map[string]string{},
-		userTokens:   map[string]string{},
-		boards:       defaultBoards(),
-		posts:        []Post{},
-		comments:     []Comment{},
-		postVotes:    map[string]map[string]int{},
-		commentVotes: map[string]map[string]int{},
-		files:        map[string]FileMeta{},
-		messages:     map[string][]ChatMessage{},
-		follows:      map[string]map[string]bool{},
+		users:               map[string]User{},
+		accounts:            map[string]string{},
+		passwords:           map[string]string{},
+		accountVerification: map[string]AccountVerification{},
+		tokens:              map[string]string{},
+		userTokens:          map[string]string{},
+		boards:              defaultBoards(),
+		posts:               []Post{},
+		comments:            []Comment{},
+		postVotes:           map[string]map[string]int{},
+		commentVotes:        map[string]map[string]int{},
+		files:               map[string]FileMeta{},
+		messages:            map[string][]ChatMessage{},
+		follows:             map[string]map[string]bool{},
 	}
 }
 

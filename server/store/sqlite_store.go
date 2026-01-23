@@ -81,7 +81,10 @@ func (s *SQLiteStore) migrate() error {
 		`CREATE TABLE IF NOT EXISTS accounts (
 			account TEXT PRIMARY KEY,
 			user_id TEXT NOT NULL,
-			password_hash TEXT
+			password_hash TEXT,
+			verified_at TEXT,
+			verify_token_hash TEXT,
+			verify_token_expires_at TEXT
 		);`,
 		`CREATE TABLE IF NOT EXISTS tokens (
 			token TEXT PRIMARY KEY,
@@ -238,6 +241,34 @@ func (s *SQLiteStore) migrate() error {
 			return err
 		}
 	}
+	if _, err := s.db.Exec(`ALTER TABLE accounts ADD COLUMN verified_at TEXT;`); err != nil {
+		if !isSQLiteDuplicateColumnError(err) {
+			return err
+		}
+	}
+	if _, err := s.db.Exec(`ALTER TABLE accounts ADD COLUMN verify_token_hash TEXT;`); err != nil {
+		if !isSQLiteDuplicateColumnError(err) {
+			return err
+		}
+	}
+	if _, err := s.db.Exec(`ALTER TABLE accounts ADD COLUMN verify_token_expires_at TEXT;`); err != nil {
+		if !isSQLiteDuplicateColumnError(err) {
+			return err
+		}
+	}
+	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_accounts_verify_token_hash ON accounts(verify_token_hash);`); err != nil {
+		return err
+	}
+	_, _ = s.db.Exec(
+		`UPDATE accounts
+		 SET verified_at = ?
+		 WHERE (verified_at IS NULL OR TRIM(verified_at) = '')
+		   AND password_hash IS NOT NULL
+		   AND TRIM(password_hash) != ''
+		   AND (verify_token_hash IS NULL OR TRIM(verify_token_hash) = '')
+		   AND (verify_token_expires_at IS NULL OR TRIM(verify_token_expires_at) = '');`,
+		nowRFC3339(),
+	)
 
 	// Backward compatible migration for files table: add width and height columns.
 	if _, err := s.db.Exec(`ALTER TABLE files ADD COLUMN width INTEGER NOT NULL DEFAULT 0;`); err != nil {
@@ -448,41 +479,58 @@ func (s *SQLiteStore) rotateToken(tx *sql.Tx, userID string) (string, error) {
 	return "", lastErr
 }
 
-func (s *SQLiteStore) Register(account, password string) (string, User, error) {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return "", User{}, err
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	trimmedAccount := strings.TrimSpace(account)
+func (s *SQLiteStore) Register(account, password, nickname string) (RegisterResult, error) {
+	normalizedAccount := normalizeEmail(account)
 	trimmedPassword := strings.TrimSpace(password)
-	if trimmedAccount == "" || trimmedPassword == "" {
-		return "", User{}, ErrInvalidInput
+	trimmedNickname := strings.TrimSpace(nickname)
+	if normalizedAccount == "" || trimmedPassword == "" || trimmedNickname == "" {
+		return RegisterResult{}, ErrInvalidInput
+	}
+	if !validateEmail(normalizedAccount) {
+		return RegisterResult{}, ErrInvalidEmail
+	}
+	if !validatePassword(trimmedPassword) {
+		return RegisterResult{}, ErrWeakPassword
+	}
+	if !validateNickname(trimmedNickname) {
+		return RegisterResult{}, ErrInvalidNickname
 	}
 
 	passwordHash, err := hashPassword(trimmedPassword)
 	if err != nil {
-		return "", User{}, err
+		return RegisterResult{}, err
 	}
 
+	verificationToken, err := newVerificationToken()
+	if err != nil {
+		return RegisterResult{}, err
+	}
+	verificationHash := hashVerificationToken(verificationToken)
+	verificationExpiry := verificationTokenExpiry().Format(time.RFC3339)
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return RegisterResult{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
 	var userID string
-	var storedHash sql.NullString
-	err = tx.QueryRow(`SELECT user_id, password_hash FROM accounts WHERE account = ?;`, trimmedAccount).
-		Scan(&userID, &storedHash)
+	var verifiedAt sql.NullString
+	err = tx.QueryRow(`SELECT user_id, verified_at FROM accounts WHERE account = ?;`, normalizedAccount).
+		Scan(&userID, &verifiedAt)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return "", User{}, err
+		return RegisterResult{}, err
 	}
 
 	var user User
 	if errors.Is(err, sql.ErrNoRows) || userID == "" {
 		seq, err := s.nextCounter(tx, "user")
 		if err != nil {
-			return "", User{}, err
+			return RegisterResult{}, err
 		}
 		user = User{
 			ID:        fmt.Sprintf("u_%d", seq),
-			Nickname:  trimmedAccount,
+			Nickname:  trimmedNickname,
 			Exp:       0,
 			CreatedAt: nowRFC3339(),
 		}
@@ -494,65 +542,78 @@ func (s *SQLiteStore) Register(account, password string) (string, User, error) {
 			user.Nickname,
 			user.CreatedAt,
 		); err != nil {
-			return "", User{}, err
+			return RegisterResult{}, err
 		}
 		if _, err := tx.Exec(
-			`INSERT INTO accounts(account, user_id, password_hash) VALUES(?, ?, ?);`,
-			trimmedAccount,
+			`INSERT INTO accounts(account, user_id, password_hash, verified_at, verify_token_hash, verify_token_expires_at)
+			 VALUES(?, ?, ?, NULL, ?, ?);`,
+			normalizedAccount,
 			user.ID,
 			passwordHash,
+			verificationHash,
+			verificationExpiry,
 		); err != nil {
-			return "", User{}, err
+			return RegisterResult{}, err
 		}
 		userID = user.ID
 	} else {
-		if strings.TrimSpace(storedHash.String) != "" {
-			return "", User{}, ErrAccountExists
+		if strings.TrimSpace(verifiedAt.String) != "" {
+			return RegisterResult{}, ErrAccountExists
 		}
-		if _, err := tx.Exec(`UPDATE accounts SET password_hash = ? WHERE account = ?;`, passwordHash, trimmedAccount); err != nil {
-			return "", User{}, err
+		if _, err := tx.Exec(
+			`UPDATE accounts
+			 SET password_hash = ?, verify_token_hash = ?, verify_token_expires_at = ?
+			 WHERE account = ?;`,
+			passwordHash,
+			verificationHash,
+			verificationExpiry,
+			normalizedAccount,
+		); err != nil {
+			return RegisterResult{}, err
+		}
+		if _, err := tx.Exec(`UPDATE users SET nickname = ? WHERE id = ?;`, trimmedNickname, userID); err != nil {
+			return RegisterResult{}, err
 		}
 		if err := tx.QueryRow(`SELECT id, nickname, created_at, avatar, cover, bio, exp FROM users WHERE id = ?;`, userID).
 			Scan(&user.ID, &user.Nickname, &user.CreatedAt, &user.Avatar, &user.Cover, &user.Bio, &user.Exp); err != nil {
-			return "", User{}, err
+			return RegisterResult{}, err
 		}
 	}
 
-	token, err := s.rotateToken(tx, userID)
-	if err != nil {
-		return "", User{}, err
-	}
-
 	if err := tx.Commit(); err != nil {
-		return "", User{}, err
+		return RegisterResult{}, err
 	}
-	return token, user, nil
+	return RegisterResult{
+		User:              user,
+		VerificationToken: verificationToken,
+	}, nil
 }
 
 func (s *SQLiteStore) Login(account, password string) (string, User, error) {
+	normalizedAccount := normalizeEmail(account)
+	trimmedPassword := strings.TrimSpace(password)
+	if normalizedAccount == "" || trimmedPassword == "" {
+		return "", User{}, ErrInvalidInput
+	}
+
 	tx, err := s.db.Begin()
 	if err != nil {
 		return "", User{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	trimmedAccount := strings.TrimSpace(account)
-	trimmedPassword := strings.TrimSpace(password)
-	if trimmedAccount == "" || trimmedPassword == "" {
-		return "", User{}, ErrInvalidInput
-	}
-
 	var (
 		user         User
 		passwordHash sql.NullString
+		verifiedAt   sql.NullString
 	)
 	err = tx.QueryRow(
-		`SELECT u.id, u.nickname, u.created_at, u.avatar, u.cover, u.bio, u.exp, a.password_hash
+		`SELECT u.id, u.nickname, u.created_at, u.avatar, u.cover, u.bio, u.exp, a.password_hash, a.verified_at
 		 FROM accounts a
 		 JOIN users u ON u.id = a.user_id
 		 WHERE a.account = ?;`,
-		trimmedAccount,
-	).Scan(&user.ID, &user.Nickname, &user.CreatedAt, &user.Avatar, &user.Cover, &user.Bio, &user.Exp, &passwordHash)
+		normalizedAccount,
+	).Scan(&user.ID, &user.Nickname, &user.CreatedAt, &user.Avatar, &user.Cover, &user.Bio, &user.Exp, &passwordHash, &verifiedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", User{}, ErrInvalidCredentials
 	}
@@ -562,6 +623,9 @@ func (s *SQLiteStore) Login(account, password string) (string, User, error) {
 
 	if !verifyPassword(strings.TrimSpace(passwordHash.String), trimmedPassword) {
 		return "", User{}, ErrInvalidCredentials
+	}
+	if strings.TrimSpace(verifiedAt.String) == "" {
+		return "", User{}, ErrAccountUnverified
 	}
 
 	token, err := s.rotateToken(tx, user.ID)
@@ -573,6 +637,155 @@ func (s *SQLiteStore) Login(account, password string) (string, User, error) {
 		return "", User{}, err
 	}
 	return token, user, nil
+}
+
+func (s *SQLiteStore) VerifyEmail(token string) error {
+	trimmedToken := strings.TrimSpace(token)
+	if trimmedToken == "" {
+		return ErrInvalidInput
+	}
+	verificationHash := hashVerificationToken(trimmedToken)
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var account string
+	var verifiedAt sql.NullString
+	var expiresAt sql.NullString
+	err = tx.QueryRow(
+		`SELECT account, verified_at, verify_token_expires_at
+		 FROM accounts
+		 WHERE verify_token_hash = ?;`,
+		verificationHash,
+	).Scan(&account, &verifiedAt, &expiresAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrVerificationTokenInvalid
+	}
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(verifiedAt.String) != "" {
+		return nil
+	}
+	if strings.TrimSpace(expiresAt.String) == "" {
+		return ErrVerificationTokenInvalid
+	}
+	parsedExpiry, err := time.Parse(time.RFC3339, expiresAt.String)
+	if err != nil {
+		return ErrVerificationTokenInvalid
+	}
+	if time.Now().UTC().After(parsedExpiry) {
+		return ErrVerificationTokenExpired
+	}
+	if _, err := tx.Exec(
+		`UPDATE accounts
+		 SET verified_at = ?
+		 WHERE account = ?;`,
+		nowRFC3339(),
+		account,
+	); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *SQLiteStore) ResendVerification(account string) (string, error) {
+	normalizedAccount := normalizeEmail(account)
+	if normalizedAccount == "" {
+		return "", ErrInvalidInput
+	}
+	if !validateEmail(normalizedAccount) {
+		return "", ErrInvalidEmail
+	}
+
+	verificationToken, err := newVerificationToken()
+	if err != nil {
+		return "", err
+	}
+	verificationHash := hashVerificationToken(verificationToken)
+	verificationExpiry := verificationTokenExpiry().Format(time.RFC3339)
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var verifiedAt sql.NullString
+	err = tx.QueryRow(`SELECT verified_at FROM accounts WHERE account = ?;`, normalizedAccount).
+		Scan(&verifiedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(verifiedAt.String) != "" {
+		return "", ErrAccountVerified
+	}
+	if _, err := tx.Exec(
+		`UPDATE accounts
+		 SET verify_token_hash = ?, verify_token_expires_at = ?
+		 WHERE account = ?;`,
+		verificationHash,
+		verificationExpiry,
+		normalizedAccount,
+	); err != nil {
+		return "", err
+	}
+	if err := tx.Commit(); err != nil {
+		return "", err
+	}
+	return verificationToken, nil
+}
+
+func (s *SQLiteStore) DeactivateAccount(userID string) error {
+	trimmedID := strings.TrimSpace(userID)
+	if trimmedID == "" {
+		return ErrInvalidInput
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var existing string
+	if err := tx.QueryRow(`SELECT id FROM users WHERE id = ?;`, trimmedID).Scan(&existing); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM tokens WHERE user_id = ?;`, trimmedID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM accounts WHERE user_id = ?;`, trimmedID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM follows WHERE follower_id = ? OR followee_id = ?;`, trimmedID, trimmedID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(
+		`UPDATE users
+		 SET nickname = ?, avatar = '', cover = '', bio = ''
+		 WHERE id = ?;`,
+		"已注销用户",
+		trimmedID,
+	); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (s *SQLiteStore) UserByToken(token string) (User, bool) {

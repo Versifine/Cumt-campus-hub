@@ -2,6 +2,7 @@ package auth
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -12,7 +13,8 @@ import (
 )
 
 type Service struct {
-	Store store.API
+	Store  store.API
+	Mailer EmailSender
 }
 
 type loginRequest struct {
@@ -20,9 +22,24 @@ type loginRequest struct {
 	Password string `json:"password"`
 }
 
+type registerRequest struct {
+	Account         string `json:"account"`
+	Password        string `json:"password"`
+	ConfirmPassword string `json:"confirm_password"`
+	Nickname        string `json:"nickname"`
+}
+
+type resendVerificationRequest struct {
+	Account string `json:"account"`
+}
+
 type loginResponse struct {
 	Token string       `json:"token"`
 	User  userResponse `json:"user"`
+}
+
+type registerResponse struct {
+	Message string `json:"message"`
 }
 
 type userResponse struct {
@@ -39,17 +56,31 @@ type userStatsStore interface {
 
 // RegisterHandler handles POST /api/v1/auth/register.
 func (s *Service) RegisterHandler(c *gin.Context) {
-	var req loginRequest
+	var req registerRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		writeError(c, http.StatusBadRequest, 2001, "invalid json")
 		return
 	}
+	if IsNilEmailSender(s.Mailer) {
+		writeError(c, http.StatusInternalServerError, 5000, "email service unavailable")
+		return
+	}
+	if strings.TrimSpace(req.Password) != strings.TrimSpace(req.ConfirmPassword) {
+		writeError(c, http.StatusBadRequest, 1011, "passwords do not match")
+		return
+	}
 
-	token, user, err := s.Store.Register(req.Account, req.Password)
+	result, err := s.Store.Register(req.Account, req.Password, req.Nickname)
 	if err != nil {
 		switch err {
 		case store.ErrInvalidInput:
 			writeError(c, http.StatusBadRequest, 2001, "missing fields")
+		case store.ErrInvalidEmail:
+			writeError(c, http.StatusBadRequest, 1006, "invalid email")
+		case store.ErrInvalidNickname:
+			writeError(c, http.StatusBadRequest, 1012, "invalid nickname")
+		case store.ErrWeakPassword:
+			writeError(c, http.StatusBadRequest, 1007, "weak password")
 		case store.ErrAccountExists:
 			writeError(c, http.StatusConflict, 1004, "account already exists")
 		default:
@@ -57,20 +88,14 @@ func (s *Service) RegisterHandler(c *gin.Context) {
 		}
 		return
 	}
-
-	level := store.LevelForExp(user.Exp)
-	resp := loginResponse{
-		Token: token,
-		User: userResponse{
-			ID:         user.ID,
-			Nickname:   user.Nickname,
-			Avatar:     user.Avatar,
-			Level:      level.Level,
-			LevelTitle: level.Title,
-		},
+	if err := s.Mailer.SendVerificationEmail(strings.TrimSpace(req.Account), result.VerificationToken); err != nil {
+		log.Printf("failed to send verification email: %v", err)
+		writeError(c, http.StatusInternalServerError, 5000, "failed to send verification email")
+		return
 	}
 
-	c.JSON(http.StatusOK, resp)
+	resp := registerResponse{Message: "verification email sent"}
+	c.JSON(http.StatusAccepted, resp)
 }
 
 // LoginHandler handles POST /api/v1/auth/login.
@@ -88,6 +113,8 @@ func (s *Service) LoginHandler(c *gin.Context) {
 			writeError(c, http.StatusBadRequest, 2001, "missing fields")
 		case store.ErrInvalidCredentials:
 			writeError(c, http.StatusUnauthorized, 1003, "invalid credentials")
+		case store.ErrAccountUnverified:
+			writeError(c, http.StatusForbidden, 1008, "account not verified")
 		default:
 			writeError(c, http.StatusInternalServerError, 5000, "server error")
 		}
@@ -106,6 +133,85 @@ func (s *Service) LoginHandler(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, resp)
+}
+
+// VerifyEmailHandler handles GET /api/v1/auth/verify-email.
+func (s *Service) VerifyEmailHandler(c *gin.Context) {
+	trimmedToken := strings.TrimSpace(c.Query("token"))
+	if trimmedToken == "" {
+		writeError(c, http.StatusBadRequest, 2001, "missing token")
+		return
+	}
+	if err := s.Store.VerifyEmail(trimmedToken); err != nil {
+		switch err {
+		case store.ErrInvalidInput:
+			writeError(c, http.StatusBadRequest, 2001, "missing token")
+		case store.ErrVerificationTokenInvalid:
+			writeError(c, http.StatusBadRequest, 1009, "invalid verification token")
+		case store.ErrVerificationTokenExpired:
+			writeError(c, http.StatusGone, 1010, "verification token expired")
+		default:
+			writeError(c, http.StatusInternalServerError, 5000, "server error")
+		}
+		return
+	}
+
+	c.JSON(http.StatusOK, registerResponse{Message: "email verified"})
+}
+
+// ResendVerificationHandler handles POST /api/v1/auth/resend-verification.
+func (s *Service) ResendVerificationHandler(c *gin.Context) {
+	var req resendVerificationRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		writeError(c, http.StatusBadRequest, 2001, "invalid json")
+		return
+	}
+	if IsNilEmailSender(s.Mailer) {
+		writeError(c, http.StatusInternalServerError, 5000, "email service unavailable")
+		return
+	}
+
+	token, err := s.Store.ResendVerification(req.Account)
+	if err != nil {
+		switch err {
+		case store.ErrInvalidInput:
+			writeError(c, http.StatusBadRequest, 2001, "missing fields")
+		case store.ErrInvalidEmail:
+			writeError(c, http.StatusBadRequest, 1006, "invalid email")
+		case store.ErrNotFound:
+			writeError(c, http.StatusNotFound, 1013, "account not found")
+		case store.ErrAccountVerified:
+			writeError(c, http.StatusConflict, 1014, "account already verified")
+		default:
+			writeError(c, http.StatusInternalServerError, 5000, "server error")
+		}
+		return
+	}
+	if err := s.Mailer.SendVerificationEmail(strings.TrimSpace(req.Account), token); err != nil {
+		log.Printf("failed to send verification email: %v", err)
+		writeError(c, http.StatusInternalServerError, 5000, "failed to send verification email")
+		return
+	}
+
+	c.JSON(http.StatusOK, registerResponse{Message: "verification email sent"})
+}
+
+// DeactivateMe handles DELETE /api/v1/users/me.
+func (s *Service) DeactivateMe(c *gin.Context) {
+	user, ok := s.RequireUser(c)
+	if !ok {
+		return
+	}
+	if err := s.Store.DeactivateAccount(user.ID); err != nil {
+		if err == store.ErrNotFound {
+			writeError(c, http.StatusNotFound, 2001, "not found")
+			return
+		}
+		writeError(c, http.StatusInternalServerError, 5000, "server error")
+		return
+	}
+
+	c.JSON(http.StatusOK, registerResponse{Message: "account deactivated"})
 }
 
 // GetMe handles GET /api/v1/users/me.

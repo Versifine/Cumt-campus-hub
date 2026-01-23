@@ -1,0 +1,63 @@
+name: Deploy to Tencent Cloud
+
+on:
+  push:
+    branches: [ "main" ]  # 只有推送到 main 分支时才触发
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    # 1. 拉取代码
+    - uses: actions/checkout@v4
+
+    # 2. 编译前端 Vue
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+    
+    - name: Build Frontend
+      run: |
+        cd apps/web
+        npm install
+        npm run build
+    
+    - name: Move dist to root
+      run: |
+        # 把 dist 移到 Go embed 能找到的地方
+        rm -rf dist
+        mv apps/web/dist .
+        
+    # 3. 编译后端 Go
+    - name: Setup Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.22'
+
+    - name: Build Binary
+      run: |
+        GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o server_linux ./server
+
+    # 4. 传送到服务器 (只传二进制文件，不传数据库！)
+    - name: Copy file via SCP
+      uses: appleboy/scp-action@master
+      with:
+        host: ${{ secrets.SERVER_HOST }}
+        username: ${{ secrets.SERVER_USER }}
+        key: ${{ secrets.SSH_PRIVATE_KEY }}
+        source: "server_linux"
+        target: "/root/cumt-hub/"  # ⚠️ 改成你服务器上的部署目录
+
+    # 5. 重启服务
+    - name: Restart Server
+      uses: appleboy/ssh-action@master
+      with:
+        host: ${{ secrets.SERVER_HOST }}
+        username: ${{ secrets.SERVER_USER }}
+        key: ${{ secrets.SSH_PRIVATE_KEY }}
+        script: |
+          chmod +x /root/cumt-hub/server_linux
+          systemctl restart cumt-hub
+          echo "Deployment Success!"
