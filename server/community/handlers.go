@@ -2,6 +2,7 @@ package community
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"net/netip"
 	"os"
@@ -88,13 +89,9 @@ func (h *Handler) ListPosts(c *gin.Context) {
 			Score:        score,
 			CommentCount: commentCount,
 			MyVote:       myVote,
-			Author: userSummary{
-				ID:       author.ID,
-				Nickname: author.Nickname,
-				Avatar:   author.Avatar,
-			},
-			Board:     boardInfo,
-			CreatedAt: post.CreatedAt,
+			Author:       userSummaryFromUser(author),
+			Board:        boardInfo,
+			CreatedAt:    post.CreatedAt,
 		})
 	}
 
@@ -160,6 +157,9 @@ func (h *Handler) CreatePost(c *gin.Context) {
 	}
 	tags := normalizeTags(req.Tags, maxPostTags)
 	post := h.Store.CreatePost(req.BoardID, user.ID, req.Title, req.Content, contentJSON, tags, attachments)
+	if err := h.Store.AddUserExp(user.ID, 10); err != nil {
+		log.Printf("failed to add post exp for user %s: %v", user.ID, err)
+	}
 	resp := struct {
 		ID          string           `json:"id"`
 		BoardID     string           `json:"board_id"`
@@ -213,13 +213,9 @@ func (h *Handler) ListComments(c *gin.Context) {
 			myVote = h.Store.CommentVote(postID, comment.ID, viewerID)
 		}
 		items = append(items, commentItem{
-			ID:       comment.ID,
-			ParentID: parentID,
-			Author: userSummary{
-				ID:       author.ID,
-				Nickname: author.Nickname,
-				Avatar:   author.Avatar,
-			},
+			ID:          comment.ID,
+			ParentID:    parentID,
+			Author:      userSummaryFromUser(author),
 			Content:     comment.Content,
 			ContentJSON: safeJSON(comment.ContentJSON),
 			Tags:        comment.Tags,
@@ -292,6 +288,9 @@ func (h *Handler) CreateComment(c *gin.Context) {
 
 	tags := normalizeTags(req.Tags, maxCommentTags)
 	comment := h.Store.CreateComment(postID, user.ID, req.Content, contentJSON, parentIDValue, tags, attachments)
+	if err := h.Store.AddUserExp(user.ID, 2); err != nil {
+		log.Printf("failed to add comment exp for user %s: %v", user.ID, err)
+	}
 
 	// Trigger notifications
 	h.triggerCommentNotifications(postID, comment, user.ID, parentIDValue)
@@ -346,6 +345,7 @@ func (h *Handler) GetPost(c *gin.Context) {
 
 	board, _ := h.Store.GetBoard(post.BoardID)
 	author, _ := h.Store.GetUser(post.AuthorID)
+	authorLevel := store.LevelForExp(author.Exp)
 	score := h.Store.PostScore(post.ID)
 	commentCount := h.Store.CommentCount(post.ID)
 	myVote := 0
@@ -380,9 +380,11 @@ func (h *Handler) GetPost(c *gin.Context) {
 			"name": board.Name,
 		},
 		Author: map[string]any{
-			"id":       author.ID,
-			"nickname": author.Nickname,
-			"avatar":   author.Avatar,
+			"id":          author.ID,
+			"nickname":    author.Nickname,
+			"avatar":      author.Avatar,
+			"level":       authorLevel.Level,
+			"level_title": authorLevel.Title,
 		},
 		Title:        post.Title,
 		Content:      post.Content,
@@ -732,9 +734,22 @@ type commentItem struct {
 }
 
 type userSummary struct {
-	ID       string `json:"id"`
-	Nickname string `json:"nickname"`
-	Avatar   string `json:"avatar"`
+	ID         string `json:"id"`
+	Nickname   string `json:"nickname"`
+	Avatar     string `json:"avatar"`
+	Level      int    `json:"level"`
+	LevelTitle string `json:"level_title"`
+}
+
+func userSummaryFromUser(user store.User) userSummary {
+	level := store.LevelForExp(user.Exp)
+	return userSummary{
+		ID:         user.ID,
+		Nickname:   user.Nickname,
+		Avatar:     user.Avatar,
+		Level:      level.Level,
+		LevelTitle: level.Title,
+	}
 }
 
 func normalizeAttachmentIDs(ids []string) []string {

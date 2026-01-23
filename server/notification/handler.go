@@ -19,15 +19,17 @@ type Handler struct {
 
 // NotificationResponse is a single notification in API responses.
 type NotificationResponse struct {
-	ID          string `json:"id"`
-	ActorID     string `json:"actor_id"`
-	ActorName   string `json:"actor_name"`
-	ActorAvatar string `json:"actor_avatar"`
-	Type        string `json:"type"`
-	TargetType  string `json:"target_type,omitempty"`
-	TargetID    string `json:"target_id,omitempty"`
-	Read        bool   `json:"read"`
-	CreatedAt   string `json:"created_at"`
+	ID              string `json:"id"`
+	ActorID         string `json:"actor_id"`
+	ActorName       string `json:"actor_name"`
+	ActorAvatar     string `json:"actor_avatar"`
+	ActorLevel      int    `json:"actor_level"`
+	ActorLevelTitle string `json:"actor_level_title"`
+	Type            string `json:"type"`
+	TargetType      string `json:"target_type,omitempty"`
+	TargetID        string `json:"target_id,omitempty"`
+	Read            bool   `json:"read"`
+	CreatedAt       string `json:"created_at"`
 }
 
 // ListResponse is the response for listing notifications.
@@ -61,21 +63,28 @@ func (h *Handler) List(c *gin.Context) {
 	for _, n := range notifications {
 		actorName := ""
 		actorAvatar := ""
+		actorLevel := 0
+		actorLevelTitle := ""
 		if actor, ok := h.Store.GetUser(n.ActorID); ok {
 			actorName = actor.Nickname
 			actorAvatar = actor.Avatar
+			level := store.LevelForExp(actor.Exp)
+			actorLevel = level.Level
+			actorLevelTitle = level.Title
 		}
 
 		results = append(results, NotificationResponse{
-			ID:          n.ID,
-			ActorID:     n.ActorID,
-			ActorName:   actorName,
-			ActorAvatar: actorAvatar,
-			Type:        n.Type,
-			TargetType:  n.TargetType,
-			TargetID:    n.TargetID,
-			Read:        strings.TrimSpace(n.ReadAt) != "",
-			CreatedAt:   n.CreatedAt,
+			ID:              n.ID,
+			ActorID:         n.ActorID,
+			ActorName:       actorName,
+			ActorAvatar:     actorAvatar,
+			ActorLevel:      actorLevel,
+			ActorLevelTitle: actorLevelTitle,
+			Type:            n.Type,
+			TargetType:      n.TargetType,
+			TargetID:        n.TargetID,
+			Read:            strings.TrimSpace(n.ReadAt) != "",
+			CreatedAt:       n.CreatedAt,
 		})
 	}
 

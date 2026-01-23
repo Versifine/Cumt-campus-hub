@@ -2,6 +2,8 @@ export type AuthUser = {
   id: string
   nickname: string
   avatar?: string
+  level?: number
+  level_title?: string
 }
 
 const TOKEN_KEY = 'campus_hub_token'

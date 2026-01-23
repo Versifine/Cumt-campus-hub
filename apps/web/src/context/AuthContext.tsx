@@ -32,6 +32,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           id: profile.id, 
           nickname: profile.nickname,
           avatar: profile.avatar,
+          level: profile.level,
+          level_title: profile.level_title,
         }
         setUser(nextUser)
         setStoredUser(nextUser)

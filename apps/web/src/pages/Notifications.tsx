@@ -10,6 +10,7 @@ import {
 } from '@ant-design/icons'
 import { getErrorMessage } from '../api/client'
 import { fetchNotifications, markAllNotificationsRead, markNotificationRead, type NotificationItem } from '../api/notifications'
+import LevelBadge from '../components/LevelBadge'
 import SiteHeader from '../components/SiteHeader'
 import { ErrorState } from '../components/StateBlocks'
 
@@ -129,6 +130,7 @@ const Notifications = () => {
               <Link to={`/u/${notif.actor_id}`} style={{ fontWeight: 500 }}>
                 {notif.actor_name || '用户'}
               </Link>
+              <LevelBadge level={notif.actor_level} title={notif.actor_level_title} compact />
               <Tag color={config.color} icon={config.icon}>
                 {config.label}
               </Tag>

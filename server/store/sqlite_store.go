@@ -75,6 +75,7 @@ func (s *SQLiteStore) migrate() error {
 			avatar TEXT NOT NULL DEFAULT '',
 			cover TEXT NOT NULL DEFAULT '',
 			bio TEXT NOT NULL DEFAULT '',
+			exp INTEGER NOT NULL DEFAULT 0,
 			created_at TEXT NOT NULL
 		);`,
 		`CREATE TABLE IF NOT EXISTS accounts (
@@ -219,6 +220,11 @@ func (s *SQLiteStore) migrate() error {
 		}
 	}
 	if _, err := s.db.Exec(`ALTER TABLE users ADD COLUMN bio TEXT NOT NULL DEFAULT '';`); err != nil {
+		if !isSQLiteDuplicateColumnError(err) {
+			return err
+		}
+	}
+	if _, err := s.db.Exec(`ALTER TABLE users ADD COLUMN exp INTEGER NOT NULL DEFAULT 0;`); err != nil {
 		if !isSQLiteDuplicateColumnError(err) {
 			return err
 		}
@@ -444,11 +450,12 @@ func (s *SQLiteStore) Register(account, password string) (string, User, error) {
 		user = User{
 			ID:        fmt.Sprintf("u_%d", seq),
 			Nickname:  trimmedAccount,
+			Exp:       0,
 			CreatedAt: nowRFC3339(),
 		}
 
 		if _, err := tx.Exec(
-			`INSERT INTO users(seq, id, nickname, created_at, avatar, cover, bio) VALUES(?, ?, ?, ?, '', '', '');`,
+			`INSERT INTO users(seq, id, nickname, created_at, avatar, cover, bio, exp) VALUES(?, ?, ?, ?, '', '', '', 0);`,
 			seq,
 			user.ID,
 			user.Nickname,
@@ -472,8 +479,8 @@ func (s *SQLiteStore) Register(account, password string) (string, User, error) {
 		if _, err := tx.Exec(`UPDATE accounts SET password_hash = ? WHERE account = ?;`, passwordHash, trimmedAccount); err != nil {
 			return "", User{}, err
 		}
-		if err := tx.QueryRow(`SELECT id, nickname, created_at, avatar, cover, bio FROM users WHERE id = ?;`, userID).
-			Scan(&user.ID, &user.Nickname, &user.CreatedAt, &user.Avatar, &user.Cover, &user.Bio); err != nil {
+		if err := tx.QueryRow(`SELECT id, nickname, created_at, avatar, cover, bio, exp FROM users WHERE id = ?;`, userID).
+			Scan(&user.ID, &user.Nickname, &user.CreatedAt, &user.Avatar, &user.Cover, &user.Bio, &user.Exp); err != nil {
 			return "", User{}, err
 		}
 	}
@@ -507,12 +514,12 @@ func (s *SQLiteStore) Login(account, password string) (string, User, error) {
 		passwordHash sql.NullString
 	)
 	err = tx.QueryRow(
-		`SELECT u.id, u.nickname, u.created_at, u.avatar, u.cover, u.bio, a.password_hash
+		`SELECT u.id, u.nickname, u.created_at, u.avatar, u.cover, u.bio, u.exp, a.password_hash
 		 FROM accounts a
 		 JOIN users u ON u.id = a.user_id
 		 WHERE a.account = ?;`,
 		trimmedAccount,
-	).Scan(&user.ID, &user.Nickname, &user.CreatedAt, &user.Avatar, &user.Cover, &user.Bio, &passwordHash)
+	).Scan(&user.ID, &user.Nickname, &user.CreatedAt, &user.Avatar, &user.Cover, &user.Bio, &user.Exp, &passwordHash)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", User{}, ErrInvalidCredentials
 	}
@@ -538,12 +545,12 @@ func (s *SQLiteStore) Login(account, password string) (string, User, error) {
 func (s *SQLiteStore) UserByToken(token string) (User, bool) {
 	var user User
 	err := s.db.QueryRow(
-		`SELECT u.id, u.nickname, u.created_at, u.avatar, u.cover, u.bio
+		`SELECT u.id, u.nickname, u.created_at, u.avatar, u.cover, u.bio, u.exp
 		 FROM users u
 		 JOIN tokens t ON t.user_id = u.id
 		 WHERE t.token = ?;`,
 		token,
-	).Scan(&user.ID, &user.Nickname, &user.CreatedAt, &user.Avatar, &user.Cover, &user.Bio)
+	).Scan(&user.ID, &user.Nickname, &user.CreatedAt, &user.Avatar, &user.Cover, &user.Bio, &user.Exp)
 	if err != nil {
 		return User{}, false
 	}
@@ -552,8 +559,8 @@ func (s *SQLiteStore) UserByToken(token string) (User, bool) {
 
 func (s *SQLiteStore) GetUser(userID string) (User, bool) {
 	var user User
-	if err := s.db.QueryRow(`SELECT id, nickname, created_at, avatar, cover, bio FROM users WHERE id = ?;`, userID).
-		Scan(&user.ID, &user.Nickname, &user.CreatedAt, &user.Avatar, &user.Cover, &user.Bio); err != nil {
+	if err := s.db.QueryRow(`SELECT id, nickname, created_at, avatar, cover, bio, exp FROM users WHERE id = ?;`, userID).
+		Scan(&user.ID, &user.Nickname, &user.CreatedAt, &user.Avatar, &user.Cover, &user.Bio, &user.Exp); err != nil {
 		return User{}, false
 	}
 	return user, true
@@ -580,8 +587,8 @@ func (s *SQLiteStore) UpdateUser(userID, nickname, bio, avatar, cover string) (U
 	// But to be safe and robust, let's fetch current first.
 
 	var user User
-	if err := tx.QueryRow(`SELECT id, nickname, created_at, avatar, cover, bio FROM users WHERE id = ?;`, trimmedID).
-		Scan(&user.ID, &user.Nickname, &user.CreatedAt, &user.Avatar, &user.Cover, &user.Bio); err != nil {
+	if err := tx.QueryRow(`SELECT id, nickname, created_at, avatar, cover, bio, exp FROM users WHERE id = ?;`, trimmedID).
+		Scan(&user.ID, &user.Nickname, &user.CreatedAt, &user.Avatar, &user.Cover, &user.Bio, &user.Exp); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return User{}, ErrNotFound
 		}
@@ -615,6 +622,30 @@ func (s *SQLiteStore) UpdateUser(userID, nickname, bio, avatar, cover string) (U
 		return User{}, err
 	}
 	return user, nil
+}
+
+func (s *SQLiteStore) AddUserExp(userID string, delta int) error {
+	trimmedID := strings.TrimSpace(userID)
+	if trimmedID == "" {
+		return ErrInvalidInput
+	}
+
+	res, err := s.db.Exec(
+		`UPDATE users
+		 SET exp = CASE WHEN exp + ? < 0 THEN 0 ELSE exp + ? END
+		 WHERE id = ?;`,
+		delta,
+		delta,
+		trimmedID,
+	)
+	if err != nil {
+		return err
+	}
+	affected, err := res.RowsAffected()
+	if err == nil && affected == 0 {
+		return ErrNotFound
+	}
+	return err
 }
 
 func (s *SQLiteStore) Boards() []Board {
@@ -652,10 +683,10 @@ func (s *SQLiteStore) Posts(boardID string) []Post {
 	)
 	if boardID == "" {
 		rows, err = s.db.Query(
-		`SELECT id, board_id, author_id, title, content, content_json, tags, attachments, created_at
+			`SELECT id, board_id, author_id, title, content, content_json, tags, attachments, created_at
 		 FROM posts
 		 WHERE deleted_at IS NULL OR TRIM(deleted_at) = ''
-		 ORDER BY seq DESC;`,
+		 ORDER BY created_at DESC, seq DESC;`,
 		)
 	} else {
 		rows, err = s.db.Query(
@@ -663,7 +694,7 @@ func (s *SQLiteStore) Posts(boardID string) []Post {
 			 FROM posts
 			 WHERE board_id = ?
 			   AND (deleted_at IS NULL OR TRIM(deleted_at) = '')
-			 ORDER BY seq DESC;`,
+			 ORDER BY created_at DESC, seq DESC;`,
 			boardID,
 		)
 	}
@@ -1561,7 +1592,7 @@ func (s *SQLiteStore) Followers(userID string, offset, limit int) ([]User, int) 
 	}
 
 	rows, err := s.db.Query(
-		`SELECT u.id, u.nickname, u.created_at, u.avatar, u.cover, u.bio
+		`SELECT u.id, u.nickname, u.created_at, u.avatar, u.cover, u.bio, u.exp
 		 FROM follows f
 		 JOIN users u ON u.id = f.follower_id
 		 WHERE f.followee_id = ?
@@ -1577,7 +1608,7 @@ func (s *SQLiteStore) Followers(userID string, offset, limit int) ([]User, int) 
 	out := make([]User, 0, limit)
 	for rows.Next() {
 		var user User
-		if err := rows.Scan(&user.ID, &user.Nickname, &user.CreatedAt, &user.Avatar, &user.Cover, &user.Bio); err != nil {
+		if err := rows.Scan(&user.ID, &user.Nickname, &user.CreatedAt, &user.Avatar, &user.Cover, &user.Bio, &user.Exp); err != nil {
 			return nil, 0
 		}
 		out = append(out, user)
@@ -1599,7 +1630,7 @@ func (s *SQLiteStore) Following(userID string, offset, limit int) ([]User, int) 
 	}
 
 	rows, err := s.db.Query(
-		`SELECT u.id, u.nickname, u.created_at, u.avatar, u.cover, u.bio
+		`SELECT u.id, u.nickname, u.created_at, u.avatar, u.cover, u.bio, u.exp
 		 FROM follows f
 		 JOIN users u ON u.id = f.followee_id
 		 WHERE f.follower_id = ?
@@ -1615,7 +1646,7 @@ func (s *SQLiteStore) Following(userID string, offset, limit int) ([]User, int) 
 	out := make([]User, 0, limit)
 	for rows.Next() {
 		var user User
-		if err := rows.Scan(&user.ID, &user.Nickname, &user.CreatedAt, &user.Avatar, &user.Cover, &user.Bio); err != nil {
+		if err := rows.Scan(&user.ID, &user.Nickname, &user.CreatedAt, &user.Avatar, &user.Cover, &user.Bio, &user.Exp); err != nil {
 			return nil, 0
 		}
 		out = append(out, user)
@@ -1729,7 +1760,7 @@ func (s *SQLiteStore) SearchPosts(keyword string, offset, limit int) ([]Post, in
 		 FROM posts
 		 WHERE (title LIKE ? OR content LIKE ?)
 		   AND (deleted_at IS NULL OR TRIM(deleted_at) = '')
-		 ORDER BY seq DESC
+		 ORDER BY created_at DESC, seq DESC
 		 LIMIT ? OFFSET ?;`,
 		pattern, pattern, limit, offset,
 	)
@@ -1781,7 +1812,7 @@ func (s *SQLiteStore) SearchUsers(keyword string, offset, limit int) ([]User, in
 
 	// Get paginated results
 	rows, err := s.db.Query(
-		`SELECT id, nickname, created_at, avatar, cover, bio
+		`SELECT id, nickname, created_at, avatar, cover, bio, exp
 		 FROM users
 		 WHERE nickname LIKE ?
 		 ORDER BY created_at DESC
@@ -1796,7 +1827,7 @@ func (s *SQLiteStore) SearchUsers(keyword string, offset, limit int) ([]User, in
 	out := make([]User, 0, limit)
 	for rows.Next() {
 		var user User
-		if err := rows.Scan(&user.ID, &user.Nickname, &user.CreatedAt, &user.Avatar, &user.Cover, &user.Bio); err != nil {
+		if err := rows.Scan(&user.ID, &user.Nickname, &user.CreatedAt, &user.Avatar, &user.Cover, &user.Bio, &user.Exp); err != nil {
 			return nil, 0
 		}
 		out = append(out, user)

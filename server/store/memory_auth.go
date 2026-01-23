@@ -33,6 +33,7 @@ func (s *Store) Register(account, password string) (string, User, error) {
 		user := User{
 			ID:        userID,
 			Nickname:  trimmedAccount,
+			Exp:       0,
 			CreatedAt: now(),
 		}
 		s.users[userID] = user

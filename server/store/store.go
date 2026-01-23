@@ -14,6 +14,7 @@ type User struct {
 	Avatar    string
 	Cover     string
 	Bio       string
+	Exp       int
 	CreatedAt string
 }
 
@@ -28,6 +29,7 @@ type API interface {
 	UserByToken(token string) (User, bool)
 	GetUser(userID string) (User, bool)
 	UpdateUser(userID, nickname, bio, avatar, cover string) (User, error)
+	AddUserExp(userID string, delta int) error
 
 	FollowUser(followerID, followeeID string) error
 	UnfollowUser(followerID, followeeID string) error
@@ -265,6 +267,22 @@ func (s *Store) UpdateUser(userID, nickname, bio, avatar, cover string) (User, e
 	return user, nil
 }
 
+func (s *Store) AddUserExp(userID string, delta int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	user, ok := s.users[userID]
+	if !ok {
+		return ErrNotFound
+	}
+	user.Exp += delta
+	if user.Exp < 0 {
+		user.Exp = 0
+	}
+	s.users[userID] = user
+	return nil
+}
+
 func (s *Store) FollowUser(followerID, followeeID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -441,24 +459,20 @@ func (s *Store) Posts(boardID string) []Post {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if boardID == "" {
-		out := make([]Post, 0, len(s.posts))
-		for i := len(s.posts) - 1; i >= 0; i-- {
-			post := s.posts[i]
-			if post.DeletedAt == "" {
-				out = append(out, post)
-			}
+	filtered := make([]Post, 0, len(s.posts))
+	for _, post := range s.posts {
+		if post.DeletedAt != "" {
+			continue
 		}
-		return out
+		if boardID != "" && post.BoardID != boardID {
+			continue
+		}
+		filtered = append(filtered, post)
 	}
 
-	filtered := make([]Post, 0, len(s.posts))
-	for i := len(s.posts) - 1; i >= 0; i-- {
-		post := s.posts[i]
-		if post.BoardID == boardID && post.DeletedAt == "" {
-			filtered = append(filtered, post)
-		}
-	}
+	sort.SliceStable(filtered, func(i, j int) bool {
+		return filtered[i].CreatedAt > filtered[j].CreatedAt
+	})
 	return filtered
 }
 

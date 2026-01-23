@@ -5,6 +5,8 @@ export type NotificationItem = {
   actor_id: string
   actor_name: string
   actor_avatar: string
+  actor_level?: number
+  actor_level_title?: string
   type: 'comment' | 'reply' | 'follow' | 'like'
   target_type: string
   target_id: string

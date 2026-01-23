@@ -73,12 +73,14 @@ const EditProfileModal = ({ visible, onClose, user, onSuccess }: EditProfileModa
         cover: coverUrl,
       })
 
-      if (authUser && authUser.id === updated.id) {
-        const nextUser = {
-          ...authUser,
-          nickname: updated.nickname,
-          avatar: updated.avatar,
-        }
+        if (authUser && authUser.id === updated.id) {
+          const nextUser = {
+            ...authUser,
+            nickname: updated.nickname,
+            avatar: updated.avatar,
+            level: updated.level,
+            level_title: updated.level_title,
+          }
         setUser(nextUser)
         setStoredUser(nextUser)
       }

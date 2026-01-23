@@ -26,9 +26,11 @@ type loginResponse struct {
 }
 
 type userResponse struct {
-	ID       string `json:"id"`
-	Nickname string `json:"nickname"`
-	Avatar   string `json:"avatar"`
+	ID         string `json:"id"`
+	Nickname   string `json:"nickname"`
+	Avatar     string `json:"avatar"`
+	Level      int    `json:"level"`
+	LevelTitle string `json:"level_title"`
 }
 
 type userStatsStore interface {
@@ -56,12 +58,15 @@ func (s *Service) RegisterHandler(c *gin.Context) {
 		return
 	}
 
+	level := store.LevelForExp(user.Exp)
 	resp := loginResponse{
 		Token: token,
 		User: userResponse{
-			ID:       user.ID,
-			Nickname: user.Nickname,
-			Avatar:   user.Avatar,
+			ID:         user.ID,
+			Nickname:   user.Nickname,
+			Avatar:     user.Avatar,
+			Level:      level.Level,
+			LevelTitle: level.Title,
 		},
 	}
 
@@ -88,12 +93,15 @@ func (s *Service) LoginHandler(c *gin.Context) {
 		}
 		return
 	}
+	level := store.LevelForExp(user.Exp)
 	resp := loginResponse{
 		Token: token,
 		User: userResponse{
-			ID:       user.ID,
-			Nickname: user.Nickname,
-			Avatar:   user.Avatar,
+			ID:         user.ID,
+			Nickname:   user.Nickname,
+			Avatar:     user.Avatar,
+			Level:      level.Level,
+			LevelTitle: level.Title,
 		},
 	}
 
@@ -110,6 +118,7 @@ func (s *Service) GetMe(c *gin.Context) {
 	postsCount, commentsCount, _ := s.userStats(user.ID)
 	followers, following := s.Store.GetFollowCounts(user.ID)
 
+	level := store.LevelForExp(user.Exp)
 	resp := struct {
 		ID             string `json:"id"`
 		Nickname       string `json:"nickname"`
@@ -121,6 +130,9 @@ func (s *Service) GetMe(c *gin.Context) {
 		CommentsCount  int    `json:"comments_count"`
 		FollowersCount int    `json:"followers_count"`
 		FollowingCount int    `json:"following_count"`
+		Level          int    `json:"level"`
+		LevelTitle     string `json:"level_title"`
+		Exp            int    `json:"exp"`
 	}{
 		ID:             user.ID,
 		Nickname:       user.Nickname,
@@ -132,6 +144,9 @@ func (s *Service) GetMe(c *gin.Context) {
 		CommentsCount:  commentsCount,
 		FollowersCount: followers,
 		FollowingCount: following,
+		Level:          level.Level,
+		LevelTitle:     level.Title,
+		Exp:            user.Exp,
 	}
 
 	c.JSON(http.StatusOK, resp)
@@ -152,12 +167,15 @@ func (s *Service) GetFollowers(c *gin.Context) {
 	items, total := s.Store.Followers(targetID, offset, pageSize)
 	respItems := make([]map[string]any, 0, len(items))
 	for _, u := range items {
+		level := store.LevelForExp(u.Exp)
 		respItems = append(respItems, map[string]any{
-			"id":         u.ID,
-			"nickname":   u.Nickname,
-			"avatar":     u.Avatar,
-			"bio":        u.Bio,
-			"created_at": u.CreatedAt,
+			"id":          u.ID,
+			"nickname":    u.Nickname,
+			"avatar":      u.Avatar,
+			"bio":         u.Bio,
+			"created_at":  u.CreatedAt,
+			"level":       level.Level,
+			"level_title": level.Title,
 		})
 	}
 
@@ -182,12 +200,15 @@ func (s *Service) GetFollowing(c *gin.Context) {
 	items, total := s.Store.Following(targetID, offset, pageSize)
 	respItems := make([]map[string]any, 0, len(items))
 	for _, u := range items {
+		level := store.LevelForExp(u.Exp)
 		respItems = append(respItems, map[string]any{
-			"id":         u.ID,
-			"nickname":   u.Nickname,
-			"avatar":     u.Avatar,
-			"bio":        u.Bio,
-			"created_at": u.CreatedAt,
+			"id":          u.ID,
+			"nickname":    u.Nickname,
+			"avatar":      u.Avatar,
+			"bio":         u.Bio,
+			"created_at":  u.CreatedAt,
+			"level":       level.Level,
+			"level_title": level.Title,
 		})
 	}
 
@@ -284,20 +305,27 @@ func (s *Service) UpdateMe(c *gin.Context) {
 		return
 	}
 
+	level := store.LevelForExp(updated.Exp)
 	resp := struct {
-		ID        string `json:"id"`
-		Nickname  string `json:"nickname"`
-		Avatar    string `json:"avatar"`
-		Bio       string `json:"bio"`
-		Cover     string `json:"cover"`
-		CreatedAt string `json:"created_at"`
+		ID         string `json:"id"`
+		Nickname   string `json:"nickname"`
+		Avatar     string `json:"avatar"`
+		Bio        string `json:"bio"`
+		Cover      string `json:"cover"`
+		CreatedAt  string `json:"created_at"`
+		Level      int    `json:"level"`
+		LevelTitle string `json:"level_title"`
+		Exp        int    `json:"exp"`
 	}{
-		ID:        updated.ID,
-		Nickname:  updated.Nickname,
-		Avatar:    updated.Avatar,
-		Bio:       updated.Bio,
-		Cover:     updated.Cover,
-		CreatedAt: updated.CreatedAt,
+		ID:         updated.ID,
+		Nickname:   updated.Nickname,
+		Avatar:     updated.Avatar,
+		Bio:        updated.Bio,
+		Cover:      updated.Cover,
+		CreatedAt:  updated.CreatedAt,
+		Level:      level.Level,
+		LevelTitle: level.Title,
+		Exp:        updated.Exp,
 	}
 	c.JSON(http.StatusOK, resp)
 }
@@ -330,6 +358,7 @@ func (s *Service) GetUser(c *gin.Context) {
 		}
 	}
 
+	level := store.LevelForExp(user.Exp)
 	resp := struct {
 		ID             string `json:"id"`
 		Nickname       string `json:"nickname"`
@@ -342,6 +371,9 @@ func (s *Service) GetUser(c *gin.Context) {
 		FollowersCount int    `json:"followers_count"`
 		FollowingCount int    `json:"following_count"`
 		IsFollowing    bool   `json:"is_following"`
+		Level          int    `json:"level"`
+		LevelTitle     string `json:"level_title"`
+		Exp            int    `json:"exp"`
 	}{
 		ID:             user.ID,
 		Nickname:       user.Nickname,
@@ -354,6 +386,9 @@ func (s *Service) GetUser(c *gin.Context) {
 		FollowersCount: followers,
 		FollowingCount: following,
 		IsFollowing:    isFollowing,
+		Level:          level.Level,
+		LevelTitle:     level.Title,
+		Exp:            user.Exp,
 	}
 
 	c.JSON(http.StatusOK, resp)

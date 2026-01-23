@@ -4,6 +4,8 @@ export type PostAuthor = {
   id: string
   nickname: string
   avatar_url?: string
+  level?: number
+  level_title?: string
 }
 
 export type AttachmentItem = {

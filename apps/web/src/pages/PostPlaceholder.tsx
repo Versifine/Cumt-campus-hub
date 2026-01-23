@@ -51,6 +51,7 @@ import { useInfiniteScroll } from '../hooks/useInfiniteScroll'
 import { extractMediaFromContent, normalizeMediaFromAttachments } from '../utils/media'
 import { clearDraft, loadDraft, saveDraft } from '../utils/drafts'
 import { formatRelativeTimeUTC8 } from '../utils/time'
+import LevelBadge from '../components/LevelBadge'
 
 const { Content } = Layout
 const { Title, Text } = Typography
@@ -459,6 +460,7 @@ const PostPlaceholder = () => {
             {/* Meta Header */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
               <Text strong style={{ fontSize: '0.9rem' }}>{item.author.nickname}</Text>
+              <LevelBadge level={item.author.level} title={item.author.level_title} compact />
               {isOP && <Tag color="blue" bordered={false} style={{ margin: 0, fontSize: '0.75rem', lineHeight: '18px' }}>OP</Tag>}
               <Text type="secondary" style={{ fontSize: '0.8rem' }}>· {formatRelativeTimeUTC8(item.created_at)}</Text>
             </div>
@@ -592,10 +594,11 @@ const PostPlaceholder = () => {
                
                 <Space style={{ marginTop: 12 }}>
                   <Avatar src={state.data.author.avatar_url ?? (state.data.author as any).avatar} icon={<UserOutlined />} />
-                 <Text strong>{state.data.author.nickname}</Text>
-                 <Text type="secondary">· {formatRelativeTimeUTC8(state.data.created_at)}</Text>
-                 <Tag>{state.data.board?.name}</Tag>
-               </Space>
+                  <Text strong>{state.data.author.nickname}</Text>
+                  <LevelBadge level={state.data.author.level} title={state.data.author.level_title} compact />
+                  <Text type="secondary">· {formatRelativeTimeUTC8(state.data.created_at)}</Text>
+                  <Tag>{state.data.board?.name}</Tag>
+                </Space>
             </div>
 
             {/* Content */}
