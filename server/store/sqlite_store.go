@@ -104,6 +104,7 @@ func (s *SQLiteStore) migrate() error {
 			content_json TEXT NOT NULL,
 			tags TEXT NOT NULL,
 			attachments TEXT NOT NULL,
+			view_count INTEGER NOT NULL DEFAULT 0,
 			created_at TEXT NOT NULL,
 			deleted_at TEXT
 		);`,
@@ -118,6 +119,7 @@ func (s *SQLiteStore) migrate() error {
 			content_json TEXT NOT NULL,
 			tags TEXT NOT NULL,
 			attachments TEXT NOT NULL,
+			floor INTEGER NOT NULL DEFAULT 0,
 			created_at TEXT NOT NULL,
 			deleted_at TEXT
 		);`,
@@ -310,6 +312,37 @@ func (s *SQLiteStore) migrate() error {
 		if !isSQLiteDuplicateColumnError(err) {
 			return err
 		}
+	}
+	if _, err := s.db.Exec(`ALTER TABLE posts ADD COLUMN view_count INTEGER NOT NULL DEFAULT 0;`); err != nil {
+		if !isSQLiteDuplicateColumnError(err) {
+			return err
+		}
+	}
+	if _, err := s.db.Exec(`ALTER TABLE comments ADD COLUMN floor INTEGER NOT NULL DEFAULT 0;`); err != nil {
+		if !isSQLiteDuplicateColumnError(err) {
+			return err
+		}
+	}
+	if _, err := s.db.Exec(
+		`UPDATE comments
+		 SET floor = 0
+		 WHERE parent_id IS NOT NULL
+		   AND TRIM(parent_id) != '';`,
+	); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(
+		`UPDATE comments
+		 SET floor = (
+			SELECT COUNT(1)
+			FROM comments c2
+			WHERE c2.post_id = comments.post_id
+			  AND (c2.parent_id IS NULL OR TRIM(c2.parent_id) = '')
+			  AND c2.seq <= comments.seq
+		 )
+		 WHERE parent_id IS NULL OR TRIM(parent_id) = '';`,
+	); err != nil {
+		return err
 	}
 	return nil
 }
@@ -683,14 +716,14 @@ func (s *SQLiteStore) Posts(boardID string) []Post {
 	)
 	if boardID == "" {
 		rows, err = s.db.Query(
-			`SELECT id, board_id, author_id, title, content, content_json, tags, attachments, created_at
+			`SELECT id, board_id, author_id, title, content, content_json, tags, attachments, view_count, created_at
 		 FROM posts
 		 WHERE deleted_at IS NULL OR TRIM(deleted_at) = ''
 		 ORDER BY created_at DESC, seq DESC;`,
 		)
 	} else {
 		rows, err = s.db.Query(
-			`SELECT id, board_id, author_id, title, content, content_json, tags, attachments, created_at
+			`SELECT id, board_id, author_id, title, content, content_json, tags, attachments, view_count, created_at
 			 FROM posts
 			 WHERE board_id = ?
 			   AND (deleted_at IS NULL OR TRIM(deleted_at) = '')
@@ -709,7 +742,7 @@ func (s *SQLiteStore) Posts(boardID string) []Post {
 		var contentJSON sql.NullString
 		var tags sql.NullString
 		var attachments sql.NullString
-		if err := rows.Scan(&p.ID, &p.BoardID, &p.AuthorID, &p.Title, &p.Content, &contentJSON, &tags, &attachments, &p.CreatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.BoardID, &p.AuthorID, &p.Title, &p.Content, &contentJSON, &tags, &attachments, &p.ViewCount, &p.CreatedAt); err != nil {
 			return nil
 		}
 		p.ContentJSON = strings.TrimSpace(contentJSON.String)
@@ -727,12 +760,12 @@ func (s *SQLiteStore) GetPost(postID string) (Post, bool) {
 	var tags sql.NullString
 	var attachments sql.NullString
 	err := s.db.QueryRow(
-		`SELECT id, board_id, author_id, title, content, content_json, tags, attachments, created_at, deleted_at
+		`SELECT id, board_id, author_id, title, content, content_json, tags, attachments, view_count, created_at, deleted_at
 		 FROM posts
 		 WHERE id = ?
 		   AND (deleted_at IS NULL OR TRIM(deleted_at) = '');`,
 		postID,
-	).Scan(&post.ID, &post.BoardID, &post.AuthorID, &post.Title, &post.Content, &contentJSON, &tags, &attachments, &post.CreatedAt, &deletedAt)
+	).Scan(&post.ID, &post.BoardID, &post.AuthorID, &post.Title, &post.Content, &contentJSON, &tags, &attachments, &post.ViewCount, &post.CreatedAt, &deletedAt)
 	if err != nil {
 		return Post{}, false
 	}
@@ -741,6 +774,26 @@ func (s *SQLiteStore) GetPost(postID string) (Post, bool) {
 	post.Attachments = decodeAttachmentIDs(attachments.String)
 	post.DeletedAt = strings.TrimSpace(deletedAt.String)
 	return post, true
+}
+
+func (s *SQLiteStore) IncrementPostViewCount(postID string) error {
+	trimmed := strings.TrimSpace(postID)
+	if trimmed == "" {
+		return ErrInvalidInput
+	}
+
+	res, err := s.db.Exec(
+		`UPDATE posts SET view_count = view_count + 1 WHERE id = ?;`,
+		trimmed,
+	)
+	if err != nil {
+		return err
+	}
+	affected, err := res.RowsAffected()
+	if err == nil && affected == 0 {
+		return ErrNotFound
+	}
+	return err
 }
 
 func (s *SQLiteStore) CreatePost(boardID, authorID, title, content, contentJSON string, tags, attachments []string) Post {
@@ -764,12 +817,13 @@ func (s *SQLiteStore) CreatePost(boardID, authorID, title, content, contentJSON 
 		ContentJSON: contentJSON,
 		Tags:        tags,
 		Attachments: attachments,
+		ViewCount:   0,
 		CreatedAt:   nowRFC3339(),
 	}
 
 	if _, err := tx.Exec(
-		`INSERT INTO posts(seq, id, board_id, author_id, title, content, content_json, tags, attachments, created_at, deleted_at)
-		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL);`,
+		`INSERT INTO posts(seq, id, board_id, author_id, title, content, content_json, tags, attachments, view_count, created_at, deleted_at)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL);`,
 		seq,
 		post.ID,
 		post.BoardID,
@@ -779,6 +833,7 @@ func (s *SQLiteStore) CreatePost(boardID, authorID, title, content, contentJSON 
 		post.ContentJSON,
 		encodeTags(post.Tags),
 		encodeAttachmentIDs(post.Attachments),
+		0,
 		post.CreatedAt,
 	); err != nil {
 		return Post{}
@@ -821,7 +876,7 @@ func (s *SQLiteStore) SoftDeletePost(postID, actorUserID string, isAdmin bool) e
 
 func (s *SQLiteStore) Comments(postID string) []Comment {
 	rows, err := s.db.Query(
-		`SELECT id, post_id, parent_id, author_id, content, content_json, tags, attachments, created_at
+		`SELECT id, post_id, parent_id, author_id, content, content_json, tags, attachments, floor, created_at
 		 FROM comments
 		 WHERE post_id = ?
 		   AND (deleted_at IS NULL OR TRIM(deleted_at) = '')
@@ -840,7 +895,7 @@ func (s *SQLiteStore) Comments(postID string) []Comment {
 		var contentJSON sql.NullString
 		var tags sql.NullString
 		var attachments sql.NullString
-		if err := rows.Scan(&c.ID, &c.PostID, &parentID, &c.AuthorID, &c.Content, &contentJSON, &tags, &attachments, &c.CreatedAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.PostID, &parentID, &c.AuthorID, &c.Content, &contentJSON, &tags, &attachments, &c.Floor, &c.CreatedAt); err != nil {
 			return nil
 		}
 		c.ParentID = strings.TrimSpace(parentID.String)
@@ -908,14 +963,14 @@ func (s *SQLiteStore) GetComment(postID, commentID string) (Comment, bool) {
 	var tags sql.NullString
 	var attachments sql.NullString
 	err := s.db.QueryRow(
-		`SELECT id, post_id, parent_id, author_id, content, content_json, tags, attachments, created_at, deleted_at
+		`SELECT id, post_id, parent_id, author_id, content, content_json, tags, attachments, floor, created_at, deleted_at
 		 FROM comments
 		 WHERE post_id = ?
 		   AND id = ?
 		   AND (deleted_at IS NULL OR TRIM(deleted_at) = '');`,
 		postID,
 		commentID,
-	).Scan(&comment.ID, &comment.PostID, &parentID, &comment.AuthorID, &comment.Content, &contentJSON, &tags, &attachments, &comment.CreatedAt, &deletedAt)
+	).Scan(&comment.ID, &comment.PostID, &parentID, &comment.AuthorID, &comment.Content, &contentJSON, &tags, &attachments, &comment.Floor, &comment.CreatedAt, &deletedAt)
 	if err != nil {
 		return Comment{}, false
 	}
@@ -939,21 +994,38 @@ func (s *SQLiteStore) CreateComment(postID, authorID, content, contentJSON, pare
 		return Comment{}
 	}
 
+	trimmedParent := strings.TrimSpace(parentID)
+	floor := 0
+	if trimmedParent == "" {
+		var maxFloor int
+		if err := tx.QueryRow(
+			`SELECT COALESCE(MAX(floor), 0)
+			 FROM comments
+			 WHERE post_id = ?
+			   AND (parent_id IS NULL OR TRIM(parent_id) = '');`,
+			postID,
+		).Scan(&maxFloor); err != nil {
+			return Comment{}
+		}
+		floor = maxFloor + 1
+	}
+
 	comment := Comment{
 		ID:          fmt.Sprintf("c_%d", seq),
 		PostID:      postID,
-		ParentID:    parentID,
+		ParentID:    trimmedParent,
 		AuthorID:    authorID,
 		Content:     content,
 		ContentJSON: contentJSON,
 		Tags:        tags,
 		Attachments: attachments,
+		Floor:       floor,
 		CreatedAt:   nowRFC3339(),
 	}
 
 	if _, err := tx.Exec(
-		`INSERT INTO comments(seq, id, post_id, parent_id, author_id, content, content_json, tags, attachments, created_at, deleted_at)
-		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL);`,
+		`INSERT INTO comments(seq, id, post_id, parent_id, author_id, content, content_json, tags, attachments, floor, created_at, deleted_at)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL);`,
 		seq,
 		comment.ID,
 		comment.PostID,
@@ -963,6 +1035,7 @@ func (s *SQLiteStore) CreateComment(postID, authorID, content, contentJSON, pare
 		comment.ContentJSON,
 		encodeTags(comment.Tags),
 		encodeAttachmentIDs(comment.Attachments),
+		comment.Floor,
 		comment.CreatedAt,
 	); err != nil {
 		return Comment{}
@@ -1676,7 +1749,7 @@ func (s *SQLiteStore) UserComments(userID string, offset, limit int) ([]Comment,
 	}
 
 	rows, err := s.db.Query(
-		`SELECT c.id, c.post_id, c.parent_id, c.author_id, c.content, c.content_json, c.tags, c.attachments, c.created_at
+		`SELECT c.id, c.post_id, c.parent_id, c.author_id, c.content, c.content_json, c.tags, c.attachments, c.floor, c.created_at
 		 FROM comments c
 		 JOIN posts p ON p.id = c.post_id
 		 WHERE c.author_id = ?
@@ -1707,6 +1780,7 @@ func (s *SQLiteStore) UserComments(userID string, offset, limit int) ([]Comment,
 			&contentJSON,
 			&tags,
 			&attachments,
+			&comment.Floor,
 			&comment.CreatedAt,
 		); err != nil {
 			return nil, 0
@@ -1756,7 +1830,7 @@ func (s *SQLiteStore) SearchPosts(keyword string, offset, limit int) ([]Post, in
 
 	// Get paginated results
 	rows, err := s.db.Query(
-		`SELECT id, board_id, author_id, title, content, content_json, tags, attachments, created_at
+		`SELECT id, board_id, author_id, title, content, content_json, tags, attachments, view_count, created_at
 		 FROM posts
 		 WHERE (title LIKE ? OR content LIKE ?)
 		   AND (deleted_at IS NULL OR TRIM(deleted_at) = '')
@@ -1775,7 +1849,7 @@ func (s *SQLiteStore) SearchPosts(keyword string, offset, limit int) ([]Post, in
 		var contentJSON sql.NullString
 		var tags sql.NullString
 		var attachments sql.NullString
-		if err := rows.Scan(&p.ID, &p.BoardID, &p.AuthorID, &p.Title, &p.Content, &contentJSON, &tags, &attachments, &p.CreatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.BoardID, &p.AuthorID, &p.Title, &p.Content, &contentJSON, &tags, &attachments, &p.ViewCount, &p.CreatedAt); err != nil {
 			return nil, 0
 		}
 		p.ContentJSON = strings.TrimSpace(contentJSON.String)

@@ -12,6 +12,7 @@ import {
   Col, 
   Statistic,
   Progress,
+  Tag,
   Empty,
   Typography,
   theme,
@@ -571,22 +572,42 @@ const UserProfile = () => {
                         ) : (
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
                             {comments.map((comment) => (
-                              <Card key={comment.id} bordered style={{ borderRadius: 12 }}>
-                                <div style={{ marginBottom: 8 }}>
-                                  <Typography.Text type="secondary">在帖子</Typography.Text>
-                                  <Button 
-                                    type="link" 
-                                    onClick={() => navigate(`/post/${comment.post_id}`)}
-                                    style={{ padding: 0, marginLeft: 4 }}
-                                  >
-                                    {comment.post_id}
-                                  </Button>
+                              <Card
+                                key={comment.id}
+                                bordered
+                                hoverable
+                                onClick={() => navigate(`/post/${comment.post_id}?comment_id=${comment.id}`)}
+                                style={{ borderRadius: 12, cursor: 'pointer' }}
+                              >
+                                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, marginBottom: 8 }}>
+                                  <Space size={8} wrap>
+                                    {comment.board_name && (
+                                      <Tag color="geekblue" bordered={false} style={{ marginInlineStart: 0 }}>
+                                        {comment.board_name}
+                                      </Tag>
+                                    )}
+                                    <Typography.Text strong>
+                                      {comment.post_title || comment.post_id}
+                                    </Typography.Text>
+                                    {comment.floor ? (
+                                      <Tag color="blue" bordered={false} style={{ marginInlineStart: 0 }}>
+                                        #{comment.floor}楼
+                                      </Tag>
+                                    ) : comment.is_reply ? (
+                                      <Tag bordered={false} style={{ marginInlineStart: 0 }}>
+                                        回复
+                                      </Tag>
+                                    ) : null}
+                                  </Space>
+                                  <Typography.Text type="secondary" style={{ fontSize: '0.8rem' }}>
+                                    {formatRelativeTimeUTC8(comment.created_at)}
+                                  </Typography.Text>
                                 </div>
-                                <Typography.Paragraph style={{ marginBottom: 0 }}>
+                                <Typography.Paragraph style={{ marginBottom: 8 }} ellipsis={{ rows: 2 }}>
                                   {comment.content || '...'}
                                 </Typography.Paragraph>
-                                <Typography.Text type="secondary" style={{ fontSize: '0.8rem' }}>
-                                  {formatRelativeTimeUTC8(comment.created_at)}
+                                <Typography.Text type="secondary" style={{ fontSize: '0.75rem' }}>
+                                  点击卡片跳转到对应楼层
                                 </Typography.Text>
                               </Card>
                             ))}

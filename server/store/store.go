@@ -44,6 +44,7 @@ type API interface {
 
 	Posts(boardID string) []Post
 	GetPost(postID string) (Post, bool)
+	IncrementPostViewCount(postID string) error
 	CreatePost(boardID, authorID, title, content, contentJSON string, tags, attachments []string) Post
 	SoftDeletePost(postID, actorUserID string, isAdmin bool) error
 
@@ -101,6 +102,7 @@ type Post struct {
 	ContentJSON string
 	Tags        []string
 	Attachments []string
+	ViewCount   int
 	CreatedAt   string
 	DeletedAt   string
 }
@@ -115,6 +117,7 @@ type Comment struct {
 	ContentJSON string
 	Tags        []string
 	Attachments []string
+	Floor       int
 	CreatedAt   string
 	DeletedAt   string
 }
@@ -489,6 +492,20 @@ func (s *Store) GetPost(postID string) (Post, bool) {
 	return Post{}, false
 }
 
+func (s *Store) IncrementPostViewCount(postID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for idx, post := range s.posts {
+		if post.ID == postID && post.DeletedAt == "" {
+			post.ViewCount++
+			s.posts[idx] = post
+			return nil
+		}
+	}
+	return ErrNotFound
+}
+
 // CreatePost appends a post to the store and returns it.
 func (s *Store) CreatePost(boardID, authorID, title, content, contentJSON string, tags, attachments []string) Post {
 	s.mu.Lock()
@@ -508,6 +525,7 @@ func (s *Store) CreatePost(boardID, authorID, title, content, contentJSON string
 		ContentJSON: contentJSON,
 		Tags:        storedTags,
 		Attachments: storedAttachments,
+		ViewCount:   0,
 		CreatedAt:   now(),
 	}
 	s.posts = append(s.posts, post)
@@ -569,6 +587,18 @@ func (s *Store) CreateComment(postID, authorID, content, contentJSON, parentID s
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	trimmedParent := strings.TrimSpace(parentID)
+	newFloor := 0
+	if trimmedParent == "" {
+		maxFloor := 0
+		for _, comment := range s.comments {
+			if comment.PostID == postID && comment.ParentID == "" && comment.Floor > maxFloor {
+				maxFloor = comment.Floor
+			}
+		}
+		newFloor = maxFloor + 1
+	}
+
 	s.nextComment++
 	storedAttachments := make([]string, len(attachments))
 	copy(storedAttachments, attachments)
@@ -577,12 +607,13 @@ func (s *Store) CreateComment(postID, authorID, content, contentJSON, parentID s
 	comment := Comment{
 		ID:          fmt.Sprintf("c_%d", s.nextComment),
 		PostID:      postID,
-		ParentID:    parentID,
+		ParentID:    trimmedParent,
 		AuthorID:    authorID,
 		Content:     content,
 		ContentJSON: contentJSON,
 		Tags:        storedTags,
 		Attachments: storedAttachments,
+		Floor:       newFloor,
 		CreatedAt:   now(),
 	}
 	s.comments = append(s.comments, comment)

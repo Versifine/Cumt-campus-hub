@@ -78,6 +78,11 @@ export type UserCommentItem = {
   content: string
   content_json?: unknown
   created_at: string
+  floor?: number
+  post_title?: string
+  board_id?: string
+  board_name?: string
+  is_reply?: boolean
 }
 
 export type UserCommentListResponse = {

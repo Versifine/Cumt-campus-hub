@@ -56,6 +56,7 @@ export type PostDetail = {
   score?: number
   my_vote?: number
   comment_count?: number
+  view_count?: number
 }
 
 export type CreatePostInput = {
@@ -92,6 +93,7 @@ export type CommentItem = {
   attachments?: AttachmentItem[]
   created_at: string
   parent_id?: string | null
+  floor?: number
   score?: number
   my_vote?: number
 }
@@ -106,6 +108,7 @@ export type CreateCommentResponse = {
   attachments?: AttachmentItem[]
   created_at: string
   parent_id?: string | null
+  floor?: number
   score?: number
   my_vote?: number
 }

@@ -277,6 +277,7 @@ func (h *Handler) ListComments(c *gin.Context) {
 			ID:          comment.ID,
 			ParentID:    parentID,
 			Author:      userSummaryFromUser(author),
+			Floor:       comment.Floor,
 			Content:     comment.Content,
 			ContentJSON: safeJSON(comment.ContentJSON),
 			Tags:        comment.Tags,
@@ -366,6 +367,7 @@ func (h *Handler) CreateComment(c *gin.Context) {
 		PostID      string           `json:"post_id"`
 		ParentID    *string          `json:"parent_id"`
 		AuthorID    string           `json:"author_id"`
+		Floor       int              `json:"floor"`
 		Content     string           `json:"content"`
 		ContentJSON json.RawMessage  `json:"content_json,omitempty"`
 		Tags        []string         `json:"tags"`
@@ -378,6 +380,7 @@ func (h *Handler) CreateComment(c *gin.Context) {
 		PostID:      comment.PostID,
 		ParentID:    parentID,
 		AuthorID:    comment.AuthorID,
+		Floor:       comment.Floor,
 		Content:     comment.Content,
 		ContentJSON: safeJSON(comment.ContentJSON),
 		Tags:        comment.Tags,
@@ -413,6 +416,9 @@ func (h *Handler) GetPost(c *gin.Context) {
 	if viewerID := h.viewerID(c); viewerID != "" {
 		myVote = h.Store.PostVote(post.ID, viewerID)
 	}
+	go func(postID string) {
+		_ = h.Store.IncrementPostViewCount(postID)
+	}(post.ID)
 
 	var deletedAt *string
 	if strings.TrimSpace(post.DeletedAt) != "" {
@@ -432,6 +438,7 @@ func (h *Handler) GetPost(c *gin.Context) {
 		Score        int              `json:"score"`
 		MyVote       int              `json:"my_vote"`
 		CommentCount int              `json:"comment_count"`
+		ViewCount    int              `json:"view_count"`
 		CreatedAt    string           `json:"created_at"`
 		DeletedAt    any              `json:"deleted_at"`
 	}{
@@ -455,6 +462,7 @@ func (h *Handler) GetPost(c *gin.Context) {
 		Score:        score,
 		MyVote:       myVote,
 		CommentCount: commentCount,
+		ViewCount:    post.ViewCount,
 		CreatedAt:    post.CreatedAt,
 		DeletedAt:    deletedAt,
 	}
@@ -785,6 +793,7 @@ type commentItem struct {
 	ID          string           `json:"id"`
 	ParentID    *string          `json:"parent_id"`
 	Author      userSummary      `json:"author"`
+	Floor       int              `json:"floor"`
 	Content     string           `json:"content"`
 	ContentJSON json.RawMessage  `json:"content_json,omitempty"`
 	Tags        []string         `json:"tags"`

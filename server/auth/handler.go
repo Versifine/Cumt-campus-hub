@@ -233,6 +233,17 @@ func (s *Service) GetUserComments(c *gin.Context) {
 	items, total := s.Store.UserComments(targetID, offset, pageSize)
 	respItems := make([]map[string]any, 0, len(items))
 	for _, cmt := range items {
+		postTitle := ""
+		boardID := ""
+		boardName := ""
+		if post, ok := s.Store.GetPost(cmt.PostID); ok {
+			postTitle = post.Title
+			boardID = post.BoardID
+			if board, ok := s.Store.GetBoard(post.BoardID); ok {
+				boardName = board.Name
+			}
+		}
+		isReply := strings.TrimSpace(cmt.ParentID) != ""
 		respItems = append(respItems, map[string]any{
 			"id":           cmt.ID,
 			"post_id":      cmt.PostID,
@@ -241,6 +252,11 @@ func (s *Service) GetUserComments(c *gin.Context) {
 			"content":      cmt.Content,
 			"content_json": json.RawMessage(cmt.ContentJSON),
 			"created_at":   cmt.CreatedAt,
+			"floor":        cmt.Floor,
+			"post_title":   postTitle,
+			"board_id":     boardID,
+			"board_name":   boardName,
+			"is_reply":     isReply,
 		})
 	}
 
