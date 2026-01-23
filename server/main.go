@@ -1,12 +1,14 @@
 package main
 
 import (
+	"fmt"
+	"io"
 	"log"
 	"net/http"
-	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -22,6 +24,13 @@ import (
 )
 
 func main() {
+	loggerWriter, closeLogger := setupLogger()
+	defer closeLogger()
+
+	log.SetOutput(loggerWriter)
+	gin.DefaultWriter = loggerWriter
+	gin.DefaultErrorWriter = loggerWriter
+
 	// -----------------------------
 	// 1) 上传目录配置
 	// -----------------------------
@@ -78,8 +87,8 @@ func main() {
 	// 4) 路由注册（Gin）
 	// -----------------------------
 	router := gin.New()
-	router.Use(gin.Recovery())
-	router.Use(loggingMiddleware(dataStore))
+	router.Use(gin.LoggerWithWriter(loggerWriter))
+	router.Use(gin.RecoveryWithWriter(loggerWriter))
 
 	// 健康检查接口：用于容器探活/负载均衡健康检查。
 	// 返回 JSON：{"status":"ok"}。
@@ -214,53 +223,71 @@ func mustCreateStore(uploadDir string) store.API {
 	return dbStore
 }
 
-// loggingMiddleware 是一个非常简单的中间件：
-// 每次请求都会打印 "METHOD PATH"，然后继续交给下游 handler 处理。
-func loggingMiddleware(dataStore store.API) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		start := time.Now()
-		c.Next()
-
-		userID := "-"
-		token := strings.TrimSpace(c.GetHeader("Authorization"))
-		if strings.HasPrefix(strings.ToLower(token), "bearer ") {
-			token = strings.TrimSpace(token[7:])
-		} else {
-			token = ""
-		}
-		if token != "" {
-			if user, ok := dataStore.UserByToken(token); ok {
-				userID = user.ID
-			}
-		}
-
-		ip := clientIP(c.Request)
-		status := c.Writer.Status()
-		log.Printf("%s %s status=%d ip=%s user=%s dur=%s", c.Request.Method, c.Request.URL.Path, status, ip, userID, time.Since(start))
-	}
+type dailyLogWriter struct {
+	dir         string
+	prefix      string
+	currentDate string
+	file        *os.File
+	mu          sync.Mutex
 }
 
-func clientIP(r *http.Request) string {
-	forwarded := strings.TrimSpace(r.Header.Get("X-Forwarded-For"))
-	if forwarded != "" {
-		first := strings.TrimSpace(strings.Split(forwarded, ",")[0])
-		if addr, err := netip.ParseAddr(first); err == nil {
-			return addr.String()
+func newDailyLogWriter(dir, prefix string) (*dailyLogWriter, error) {
+	if strings.TrimSpace(dir) == "" {
+		return nil, fmt.Errorf("log dir is empty")
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, err
+	}
+	return &dailyLogWriter{dir: dir, prefix: prefix}, nil
+}
+
+func (w *dailyLogWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	date := time.Now().Format("2006-01-02")
+	if w.file == nil || w.currentDate != date {
+		if w.file != nil {
+			_ = w.file.Close()
 		}
-		return first
+		filename := filepath.Join(w.dir, fmt.Sprintf("%s%s.log", w.prefix, date))
+		file, err := os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		if err != nil {
+			return 0, err
+		}
+		w.file = file
+		w.currentDate = date
+	}
+	return w.file.Write(p)
+}
+
+func (w *dailyLogWriter) Close() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.file == nil {
+		return nil
+	}
+	err := w.file.Close()
+	w.file = nil
+	return err
+}
+
+func setupLogger() (io.Writer, func()) {
+	logDir := strings.TrimSpace(os.Getenv("LOG_DIR"))
+	if logDir == "" {
+		logDir = defaultLogDir()
+	}
+	logDir = filepath.Clean(logDir)
+
+	writer, err := newDailyLogWriter(logDir, "gin-")
+	if err != nil {
+		log.Printf("failed to initialize logger: %v", err)
+		return os.Stdout, func() {}
 	}
 
-	hostport := strings.TrimSpace(r.RemoteAddr)
-	if hostport == "" {
-		return ""
+	return io.MultiWriter(os.Stdout, writer), func() {
+		_ = writer.Close()
 	}
-	if addrPort, err := netip.ParseAddrPort(hostport); err == nil {
-		return addrPort.Addr().String()
-	}
-	if addr, err := netip.ParseAddr(hostport); err == nil {
-		return addr.String()
-	}
-	return hostport
 }
 
 // defaultUploadDir 推导默认上传目录：
@@ -285,4 +312,18 @@ func defaultUploadDir() string {
 
 	// 否则使用 <cwd>/storage
 	return filepath.Join(cwd, "storage")
+}
+
+func defaultLogDir() string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "logs"
+	}
+
+	serverDir := filepath.Join(cwd, "server")
+	if info, err := os.Stat(serverDir); err == nil && info.IsDir() {
+		return filepath.Join(serverDir, "logs")
+	}
+
+	return filepath.Join(cwd, "logs")
 }

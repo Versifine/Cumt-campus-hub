@@ -1,4 +1,4 @@
-# docs/api.md — campus-hub REST API 设计（v0.3）
+# docs/api.md — campus-hub REST API 设计（v0.4）
 
 > 本文档对齐当前 Demo 实现的 REST API。
 
@@ -35,7 +35,16 @@
 
 响应：
 ```json
-{ "token": "t_xxx", "user": { "id": "u_123", "nickname": "alice", "avatar": "" } }
+{
+  "token": "t_xxx",
+  "user": {
+    "id": "u_123",
+    "nickname": "alice",
+    "avatar": "",
+    "level": 1,
+    "level_title": "萌新"
+  }
+}
 ```
 
 说明：服务重启后 token 会失效。
@@ -65,6 +74,9 @@
   "cover": "",
   "bio": "",
   "created_at": "2025-01-01T00:00:00Z",
+  "exp": 12,
+  "level": 1,
+  "level_title": "萌新",
   "posts_count": 3,
   "comments_count": 8,
   "followers_count": 5,
@@ -94,6 +106,9 @@
   "cover": "",
   "bio": "",
   "created_at": "2025-01-01T00:00:00Z",
+  "exp": 120,
+  "level": 2,
+  "level_title": "进阶",
   "posts_count": 3,
   "comments_count": 8,
   "followers_count": 5,
@@ -113,7 +128,20 @@
 
 响应：
 ```json
-{ "items": [{ "id": "u_2", "nickname": "bob", "avatar": "", "bio": "", "created_at": "2025-01-01T00:00:00Z" }], "total": 1 }
+{
+  "items": [
+    {
+      "id": "u_2",
+      "nickname": "bob",
+      "avatar": "",
+      "bio": "",
+      "created_at": "2025-01-01T00:00:00Z",
+      "level": 1,
+      "level_title": "萌新"
+    }
+  ],
+  "total": 1
+}
 ```
 
 ### 4.6 粉丝列表
@@ -128,7 +156,25 @@
 
 响应：
 ```json
-{ "items": [{ "id": "c_1", "post_id": "p_1", "parent_id": "", "author_id": "u_1", "content": "text", "content_json": {}, "created_at": "2025-01-01T00:00:00Z" }], "total": 1 }
+{
+  "items": [
+    {
+      "id": "c_1",
+      "post_id": "p_1",
+      "parent_id": "",
+      "author_id": "u_1",
+      "content": "text",
+      "content_json": {},
+      "created_at": "2025-01-01T00:00:00Z",
+      "floor": 3,
+      "post_title": "期末复习资料求分享",
+      "board_id": "b_1",
+      "board_name": "综合",
+      "is_reply": false
+    }
+  ],
+  "total": 1
+}
 ```
 
 ---
@@ -141,8 +187,47 @@
 
 ## 6. 帖子 Post
 
-- `GET /api/v1/posts`
-- `GET /api/v1/posts/{post_id}`
+### 6.1 列表
+
+`GET /api/v1/posts`
+
+Query:
+
+- `board_id` 可选
+- `author_id` 可选
+- `sort=latest|hot`（默认 `latest`）
+
+响应（items 示例）：
+```json
+{
+  "id": "p_1",
+  "title": "矿大哪个食堂最好吃？",
+  "author": {
+    "id": "u_1",
+    "nickname": "alice",
+    "avatar": "",
+    "level": 2,
+    "level_title": "进阶"
+  },
+  "created_at": "2025-01-01T00:00:00Z",
+  "score": 12,
+  "comment_count": 4,
+  "my_vote": 1
+}
+```
+
+### 6.2 详情
+
+`GET /api/v1/posts/{post_id}`
+
+说明：每次获取详情会触发浏览量 +1（异步）。
+
+响应重点字段：
+
+- `view_count`: 浏览量
+
+### 6.3 创建/删除/投票
+
 - `POST /api/v1/posts`
 - `DELETE /api/v1/posts/{post_id}`
 - `POST /api/v1/posts/{post_id}/votes`
@@ -152,8 +237,15 @@
 
 ## 7. 评论 Comment
 
-- `GET /api/v1/posts/{post_id}/comments`
-- `POST /api/v1/posts/{post_id}/comments`
+### 7.1 列表
+
+`GET /api/v1/posts/{post_id}/comments`
+
+说明：仅顶层评论有 `floor`（回复为 0）。
+
+### 7.2 创建/删除/投票
+
+- `POST /api/v1/posts/{post_id}/comments`（响应含 `floor`）
 - `DELETE /api/v1/posts/{post_id}/comments/{comment_id}`
 - `POST /api/v1/posts/{post_id}/comments/{comment_id}/votes`
 - `DELETE /api/v1/posts/{post_id}/comments/{comment_id}/votes`
