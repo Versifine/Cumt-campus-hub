@@ -32,6 +32,11 @@ export const updateCurrentUser = (data: UpdateUserInput): Promise<CurrentUser> =
     body: JSON.stringify(data),
   })
 
+export const deactivateCurrentUser = (): Promise<{ message: string }> =>
+  apiRequest<{ message: string }>('/users/me', {
+    method: 'DELETE',
+  })
+
 export const followUser = (userId: string): Promise<void> =>
   apiRequest(`/users/${userId}/follow`, { method: 'POST' })
 

@@ -31,6 +31,7 @@ import {
   fetchUserComments,
   followUser, 
   unfollowUser,
+  deactivateCurrentUser,
   type FollowUserItem,
 } from '../api/users'
 import { getErrorMessage } from '../api/client'
@@ -40,6 +41,7 @@ import EditProfileModal from '../components/EditProfileModal'
 import { ErrorState } from '../components/StateBlocks'
 import { PostSkeletonList } from '../components/Skeletons'
 import { useAuth } from '../context/useAuth'
+import { clearAuth } from '../store/auth'
 import { useInfiniteScroll } from '../hooks/useInfiniteScroll'
 import { formatRelativeTimeUTC8 } from '../utils/time'
 import LevelBadge from '../components/LevelBadge'
@@ -127,7 +129,7 @@ const getExpProgress = (exp?: number | null): ExpProgress => {
 const UserProfile = () => {
   const { id } = useParams()
   const navigate = useNavigate()
-  const { user } = useAuth()
+  const { user, setUser } = useAuth()
   const { token } = theme.useToken()
   const [activeTab, setActiveTab] = useState('posts')
   const [editModalVisible, setEditModalVisible] = useState(false)
@@ -345,6 +347,27 @@ const UserProfile = () => {
   const expValue = profileState.data?.exp ?? 0
   const expProgress = getExpProgress(expValue)
 
+  const handleDeactivate = () => {
+    Modal.confirm({
+      title: '确认注销账号？',
+      content: '注销后将无法登录，发布的内容会保留并显示为已注销用户。',
+      okText: '确认注销',
+      okType: 'danger',
+      cancelText: '取消',
+      onOk: async () => {
+        try {
+          await deactivateCurrentUser()
+          clearAuth()
+          setUser(null)
+          message.success('账号已注销')
+          navigate('/login')
+        } catch (error) {
+          message.error(getErrorMessage(error))
+        }
+      },
+    })
+  }
+
 
   return (
     <Layout style={{ minHeight: '100vh', background: 'transparent' }}>
@@ -384,7 +407,10 @@ const UserProfile = () => {
                   />
                   <Space>
                     {isSelf ? (
-                      <Button onClick={() => setEditModalVisible(true)}>Edit Profile</Button>
+                      <Space>
+                        <Button onClick={() => setEditModalVisible(true)}>Edit Profile</Button>
+                        <Button danger onClick={handleDeactivate}>注销账号</Button>
+                      </Space>
                     ) : (
                       <>
                         <Button 

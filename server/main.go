@@ -54,7 +54,14 @@ func main() {
 	}
 
 	// 认证服务：依赖 store，用于登录、获取当前用户等。
-	authService := &auth.Service{Store: dataStore}
+	var mailer auth.EmailSender
+	smtpMailer, err := auth.NewSMTPMailerFromEnv()
+	if err != nil {
+		log.Printf("email disabled: %v", err)
+	} else {
+		mailer = smtpMailer
+	}
+	authService := &auth.Service{Store: dataStore, Mailer: mailer}
 
 	// 聊天 Hub：用于管理 WebSocket 连接、广播消息等（典型的 hub-and-spoke 结构）。
 	chatHub := chat.NewHub()
@@ -100,6 +107,8 @@ func main() {
 	// 5) REST API：认证相关
 	// -----------------------------
 	router.POST("/api/v1/auth/register", authService.RegisterHandler)
+	router.GET("/api/v1/auth/verify-email", authService.VerifyEmailHandler)
+	router.POST("/api/v1/auth/resend-verification", authService.ResendVerificationHandler)
 
 	// 登录接口：由 authService 提供处理函数。
 	router.POST("/api/v1/auth/login", authService.LoginHandler)
@@ -107,6 +116,7 @@ func main() {
 	// 获取当前登录用户信息（通常依赖鉴权 token/cookie 等）。
 	router.GET("/api/v1/users/me", authService.GetMe)
 	router.PATCH("/api/v1/users/me", authService.UpdateMe)
+	router.DELETE("/api/v1/users/me", authService.DeactivateMe)
 
 	router.GET("/api/v1/users/:id", authService.GetUser)
 	router.POST("/api/v1/users/:id/follow", authService.FollowUser)

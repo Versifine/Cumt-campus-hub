@@ -10,6 +10,7 @@ import Search from './pages/Search'
 import Submit from './pages/Submit'
 import UserProfile from './pages/UserProfile'
 import Admin from './pages/Admin'
+import VerifyEmail from './pages/VerifyEmail'
 
 const router = createBrowserRouter([
   {
@@ -19,6 +20,10 @@ const router = createBrowserRouter([
   {
     path: '/login',
     element: <Login />,
+  },
+  {
+    path: '/verify-email',
+    element: <VerifyEmail />,
   },
   {
     path: '/submit',

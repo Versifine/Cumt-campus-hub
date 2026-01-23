@@ -6,6 +6,18 @@ export type AuthResponse = {
   user: AuthUser
 }
 
+export type RegisterResponse = {
+  message: string
+}
+
+export type VerifyEmailResponse = {
+  message: string
+}
+
+export type ResendVerificationResponse = {
+  message: string
+}
+
 export const login = (account: string, password: string): Promise<AuthResponse> =>
   apiRequest<AuthResponse>('/auth/login', {
     method: 'POST',
@@ -15,8 +27,26 @@ export const login = (account: string, password: string): Promise<AuthResponse> 
 export const register = (
   account: string,
   password: string,
-): Promise<AuthResponse> =>
-  apiRequest<AuthResponse>('/auth/register', {
+  confirmPassword: string,
+  nickname: string,
+): Promise<RegisterResponse> =>
+  apiRequest<RegisterResponse>('/auth/register', {
     method: 'POST',
-    body: JSON.stringify({ account, password }),
+    body: JSON.stringify({
+      account,
+      password,
+      confirm_password: confirmPassword,
+      nickname,
+    }),
+  })
+
+export const verifyEmail = (token: string): Promise<VerifyEmailResponse> =>
+  apiRequest<VerifyEmailResponse>(`/auth/verify-email?token=${encodeURIComponent(token)}`, {
+    method: 'GET',
+  })
+
+export const resendVerification = (account: string): Promise<ResendVerificationResponse> =>
+  apiRequest<ResendVerificationResponse>('/auth/resend-verification', {
+    method: 'POST',
+    body: JSON.stringify({ account }),
   })
